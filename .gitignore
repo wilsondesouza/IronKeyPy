@@ -1,0 +1,7 @@
+# Ignore build and distribution directories
+*.spec
+dist
+build
+.venv
+assets/*
+__pycache__

@@ -1,0 +1,4 @@
+customtkinter==5.2.2
+pyperclip==1.8.2
+cryptography==41.0.7
+requests==2.31.0
