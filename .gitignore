@@ -1,7 +1,26 @@
-# Ignore build and distribution directories
-*.spec
-dist
-build
+# Ambientes e build
 .venv
-assets/*
-__pycache__
+venv/
+__pycache__/
+*.py[cod]
+*.spec
+build/
+dist/
+
+# Dados locais do cofre (NUNCA versionar)
+*.db
+*.db-wal
+*.db-shm
+*.bak
+config.json
+settings.json
+state.json
+*.ikbak
+*.csv
+
+# Sistema
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.pytest_cache/
