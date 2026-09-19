@@ -1,35 +1,3 @@
-"""
-Entrada de um novo dispositivo no cofre existente ("pareamento", versão 1).
-
-Por que isto é necessário
--------------------------
-O backup ``.ikbak`` **não** serve para colocar um segundo dispositivo no mesmo
-cofre: ao restaurá-lo, o aplicativo cria um cofre **novo**, com uma DEK nova e,
-portanto, uma chave de sincronização diferente. Os dois dispositivos ficariam
-com cofres distintos apontando para a mesma pasta — exatamente o cenário que
-gera duplicação e conflito eterno.
-
-Para sincronizar, os dois lados precisam da **mesma DEK** e do mesmo
-``vault_id``. É isso que este módulo transfere, num arquivo próprio
-(``*.ikenr``), protegido pela senha mestre do cofre:
-
-    ironkeypy-entrada.ikenr  →  cabeçalho do cofre (kdf, vault_id, DEK embrulhada)
-
-Decisões de segurança
----------------------
-* A senha mestre é exigida **para exportar e para importar**, nas duas pontas.
-  O arquivo não é um atalho para pular autenticação.
-* O arquivo **não** fica na pasta de sincronização. Ele é transferido uma única
-  vez, por um canal à escolha do usuário (pen drive, anexo, gerenciador de
-  senhas). Guardá-lo na nuvem junto do cofre daria a um atacante, de uma só vez,
-  o ciphertext do cofre e o material para ataque de dicionário offline contra a
-  senha mestre — exposição que hoje só existe na máquina do usuário.
-* Ao importar, o cofre **local** é substituído. Se já houver dados locais, uma
-  cópia de segurança é feita antes e nada é apagado sem confirmação explícita.
-* Sem a senha mestre correta, o arquivo é inútil: o conteúdo só é aceito depois
-  de a DEK embrulhada ser efetivamente desembrulhada.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -56,14 +24,11 @@ NONCE_SIZE = 12
 
 REQUIRED_HEADER_KEYS = ("format_version", "vault_id", "kdf", "wrapped_dek", "verifier")
 
-
 class EnrollmentError(Exception):
     """Falha ao exportar/importar a entrada de dispositivo (mensagem exibível)."""
 
-
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
 
 def _atomic_write(path: str, text: str) -> None:
     directory = os.path.dirname(os.path.abspath(path)) or "."
@@ -84,16 +49,9 @@ def _atomic_write(path: str, text: str) -> None:
                 pass
         raise
 
-
 def export_enrollment(crypto_manager: CryptoManager, master_password: str, path: str,
                       device_label: str = "") -> Dict[str, Any]:
-    """
-    Gera o arquivo de entrada a partir de um cofre **destravado**.
-
-    O cabeçalho exportado é o do próprio cofre (mesmo salt de KDF, mesmo
-    ``vault_id``, mesma DEK embrulhada), de modo que o dispositivo novo passa a
-    ser criptograficamente idêntico ao original.
-    """
+    
     if not crypto_manager.is_unlocked():
         raise EnrollmentError("Destrave o cofre antes de exportar a entrada de dispositivo.")
     if not crypto_manager.verify_master_password(master_password):
@@ -177,20 +135,10 @@ def read_enrollment(path: str, master_password: str) -> Dict[str, Any]:
     return {"header": header, "created_at": payload.get("created_at", ""),
             "source_device": payload.get("source_device", "")}
 
-
 def import_enrollment(path: str, master_password: str, config_path: str,
                       db_path: Optional[str] = None,
                       replace_existing: bool = False) -> Dict[str, Any]:
-    """
-    Instala o cabeçalho do cofre neste dispositivo.
 
-    Antes de qualquer escrita, a DEK é **efetivamente desembrulhada** num arquivo
-    temporário: se a senha mestre estiver errada ou o cabeçalho for inválido, nada
-    acontece com o cofre atual.
-
-    Se houver banco local com registros e ``replace_existing`` for falso, a
-    operação é recusada — nunca se descarta dados do usuário por engano.
-    """
     data = read_enrollment(path, master_password)
     header = data["header"]
 
@@ -242,7 +190,6 @@ def import_enrollment(path: str, master_password: str, config_path: str,
         "preserved_db": preserved_db,
     }
 
-
 def describe_header(header: Dict[str, Any]) -> str:
     """Resumo legível do cabeçalho (usado nas confirmações da interface)."""
     kdf = header.get("kdf") or {}
@@ -253,7 +200,6 @@ def describe_header(header: Dict[str, Any]) -> str:
     else:
         detail = f"{algorithm} ({int(kdf.get('iterations', 0)):,} iterações)".replace(",", ".")
     return f"{detail} · cofre {str(header.get('vault_id'))[:8]}…"
-
 
 __all__ = [
     "EnrollmentError", "export_enrollment", "read_enrollment", "import_enrollment",

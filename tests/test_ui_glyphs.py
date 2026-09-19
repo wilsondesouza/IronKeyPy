@@ -20,6 +20,9 @@ from ui.theme import GLYPHS
 # padrão do Tk em Linux. ASCII é sempre seguro.
 SAFE_GLYPHS = set(
     "◈⊘⚷☺◉○❐✎✖✕✓★☆⚙✱▣⊞❏↺⚠⇅⇄●◐◆◇⨂⋮↑↓△▲‹›·«»"
+    # Acrescentados em 2026-09-18: revalidados com fontTools contra DejaVuSans.ttf
+    # (U+21BB, U+2601, U+25A4, U+2696 — todos presentes no cmap).
+    "↻☁▤⚖"
 ) | set(chr(c) for c in range(0x20, 0x7F))
 
 EMOJI = re.compile(

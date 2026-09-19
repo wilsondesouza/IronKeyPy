@@ -1,20 +1,3 @@
-"""
-Backup portátil e importação/exportação.
-
-Bug crítico corrigido
----------------------
-A versão anterior "exportava backup" copiando apenas o ``ironkeypy.db``. Como o
-salt de derivação da chave vive no ``config.json`` (não copiado), **o backup era
-irrecuperável em outra máquina ou após uma reinstalação** — o usuário só
-descobriria isso no pior momento possível. Pior: a importação sobrescrevia o
-banco atual *antes* de verificar se o arquivo podia sequer ser decifrado.
-
-O novo formato ``.ikbak`` é autocontido: carrega o próprio salt, os parâmetros
-de KDF e os dados cifrados com AES-256-GCM, protegidos por uma senha escolhida
-na hora da exportação (por padrão, a própria senha mestre). Também é verificado
-integralmente **antes** de tocar no cofre atual.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -38,16 +21,14 @@ BACKUP_VERSION = 1
 BACKUP_AAD = b"ironkeypy.backup.v1"
 NONCE_SIZE = 12
 
-
 class BackupError(Exception):
     pass
-
 
 # ----------------------------------------------------------------------
 # Backup cifrado portátil (.ikbak)
 # ----------------------------------------------------------------------
 def export_encrypted_backup(entries: List[VaultEntry], passphrase: str, path: str) -> int:
-    """Grava um arquivo autocontido e cifrado. Retorna o nº de registros."""
+
     if not passphrase:
         raise BackupError("Informe uma senha para proteger o backup.")
     # Backup é instantâneo de conteúdo: tombstones (registros já excluídos,
@@ -82,13 +63,8 @@ def export_encrypted_backup(entries: List[VaultEntry], passphrase: str, path: st
     harden_path(path)
     return len(entries)
 
-
 def read_encrypted_backup(path: str, passphrase: str) -> Tuple[List[VaultEntry], Dict[str, Any]]:
-    """
-    Lê e **valida** um backup sem tocar no cofre atual.
 
-    Levanta :class:`BackupError` com mensagem acionável em qualquer falha.
-    """
     try:
         with open(path, "r", encoding="utf-8") as fh:
             envelope = json.load(fh)
@@ -130,20 +106,8 @@ def read_encrypted_backup(path: str, passphrase: str) -> Tuple[List[VaultEntry],
     }
     return entries, meta
 
-
 def merge_entries(existing: List[VaultEntry], incoming: List[VaultEntry]) -> Tuple[List[VaultEntry], int]:
-    """
-    Importa registros novos sem duplicar.
 
-    Critério de identidade, em ordem: ``uid`` quando o registro tem um (backup
-    do IronKey Py) e, só na ausência dele (importação de CSV), o par
-    ``(título, usuário)`` em minúsculas.
-
-    Correção relevante para a sincronização: a versão anterior **descartava o
-    uid** e gerava um novo a cada importação. Isso destruía a identidade do
-    registro — e sem identidade estável não existe mesclagem entre dispositivos,
-    só duplicação.
-    """
     by_uid = {e.uid for e in existing if e.uid}
     by_pair = {(e.title.strip().lower(), e.username.strip().lower()) for e in existing}
 
@@ -170,7 +134,6 @@ def merge_entries(existing: List[VaultEntry], incoming: List[VaultEntry]) -> Tup
         new_entries.append(entry)
     return new_entries, skipped
 
-
 # ----------------------------------------------------------------------
 # CSV (interoperabilidade — sempre em texto puro)
 # ----------------------------------------------------------------------
@@ -193,13 +156,8 @@ CSV_ALIASES = {
     "favorite": "favorite", "fav": "favorite", "favorito": "favorite",
 }
 
-
 def export_csv(entries: List[VaultEntry], path: str) -> int:
-    """
-    Exporta em texto puro para migração a outro gerenciador.
 
-    **Não é backup.** A UI exige confirmação explícita antes de chamar isto.
-    """
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_HEADER)
         writer.writeheader()
@@ -209,9 +167,8 @@ def export_csv(entries: List[VaultEntry], path: str) -> int:
     harden_path(path)
     return len(entries)
 
-
 def import_csv(path: str) -> Tuple[List[VaultEntry], List[str]]:
-    """Importa CSV do Bitwarden/LastPass/Chrome/KeePass. Retorna (registros, avisos)."""
+    
     warnings: List[str] = []
     entries: List[VaultEntry] = []
 
@@ -268,14 +225,12 @@ def import_csv(path: str) -> Tuple[List[VaultEntry], List[str]]:
         raise BackupError("Nenhum registro válido encontrado no CSV.")
     return entries, warnings
 
-
 # ----------------------------------------------------------------------
 def _entry_to_dict(entry: VaultEntry) -> Dict[str, Any]:
     data = asdict(entry)
     data.pop("row_id", None)
     data["favorite"] = bool(entry.favorite)
     return data
-
 
 def _dict_to_entry(data: Dict[str, Any]) -> VaultEntry:
     allowed = set(VaultEntry.__annotations__) - {"row_id"}

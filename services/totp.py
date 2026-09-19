@@ -1,11 +1,3 @@
-"""
-Códigos TOTP (RFC 6238 / RFC 4226) usando apenas a biblioteca padrão.
-
-Um cofre moderno precisa guardar o *segundo fator* junto da credencial —
-sem isso o usuário acaba deixando os códigos 2FA em um app sem backup ou,
-pior, desabilitando o 2FA. Implementado sem dependências novas.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -36,7 +28,6 @@ class TotpError(ValueError):
 
 
 def normalize_secret(secret: str) -> str:
-    """Remove espaços/hífens e valida o alfabeto Base32."""
     cleaned = re.sub(r"[\s-]", "", secret or "").upper()
     if not cleaned:
         raise TotpError("Segredo vazio.")
@@ -51,7 +42,6 @@ def normalize_secret(secret: str) -> str:
 
 
 def parse_otpauth_uri(uri: str) -> TotpConfig:
-    """Aceita a URI completa lida do QR Code (``otpauth://totp/...``)."""
     parsed = urlparse(uri.strip())
     if parsed.scheme.lower() != "otpauth" or parsed.netloc.lower() != "totp":
         raise TotpError("URI inválida: esperado otpauth://totp/...")

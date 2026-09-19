@@ -1,22 +1,3 @@
-"""
-Tela principal do cofre: lista de registros, gerador e auditoria.
-
-Correções de bugs visuais/estruturais herdados da versão anterior
-------------------------------------------------------------------
-* ``clear_clipboard`` chamava ``create_widgets()``, **duplicando toda a
-  interface a cada 30 s** (ver ``services/clipboard.py``).
-* A "verificação de segurança" de uma senha salva criava um diálogo de
-  progresso e o destruía com ``after(100, close_dialog)`` — a barra piscava e
-  sumia antes da resposta da rede, sem nenhum indicador do que estava
-  acontecendo. Agora o estado de carregamento fica no próprio card.
-* Botões usavam ``fg_color="black"`` com ``hover_color="darkorange"``: no tema
-  escuro o botão sumia contra o fundo e o hover destoava do resto da paleta.
-* A lista era reconstruída inteira a cada tecla digitada na busca, sem
-  *debounce* — travava perceptivelmente com poucas dezenas de registros.
-* ``'•' * len(password)`` na listagem vazava o comprimento exato de cada senha.
-* Não havia estado vazio, contagem de itens, filtros nem ordenação.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -382,8 +363,6 @@ class VaultView(ctk.CTkFrame):
         if revealed:
             label.configure(text=entry.password or "(vazia)", text_color=color("text"))
             button.configure(text=g("eye_off"))
-            # Reoculta sozinho: reduz o risco de shoulder surfing e de a senha
-            # ficar visível em uma gravação de tela esquecida.
             self.after(20000, lambda: self._auto_hide(entry, label, button))
         else:
             label.configure(text=MASK, text_color=color("text_muted"))
@@ -401,7 +380,6 @@ class VaultView(ctk.CTkFrame):
 
     # ------------------------------------------------------------------
     def _tick_totp(self) -> None:
-        """Atualiza os códigos 2FA visíveis uma vez por segundo."""
         self._refresh_totp_labels()
         self._totp_job = self.after(1000, self._tick_totp)
 

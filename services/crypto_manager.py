@@ -1,37 +1,3 @@
-"""
-Núcleo criptográfico do IronKey Py.
-
-Modelo de segurança (formato de cofre v2)
------------------------------------------
-    senha mestre --Argon2id/PBKDF2--> KEK (32B)
-    KEK --AES-256-GCM--> desembrulha a DEK (32B, aleatória)
-    DEK --AES-256-GCM--> cifra cada registro do cofre
-
-Envelope encryption (KEK/DEK) traz três ganhos diretos sobre a versão anterior,
-que derivava a chave Fernet diretamente da senha mestre:
-
-1. **Troca de senha mestre em O(1)**: basta reembrulhar a DEK; o banco inteiro
-   permanece intacto (antes, era impossível trocar a senha mestre).
-2. **AEAD real com dados associados**: AES-256-GCM autentica o cabeçalho do
-   cofre, impedindo que um atacante troque o salt/parâmetros de KDF ou mova
-   ciphertexts entre registros (ataque de "cut-and-paste").
-3. **Rotação de parâmetros de KDF** sem reprocessar o cofre.
-
-Correções de vulnerabilidade em relação à versão anterior
----------------------------------------------------------
-* ``verify_master_password`` retornava ``True`` quando a chave ``test_data``
-  não existia no ``config.json`` — bastava editar o arquivo (texto puro, sem
-  integridade) para entrar no cofre. Agora a verificação **falha fechada**.
-* PBKDF2 com 100.000 iterações estava abaixo da recomendação atual do OWASP
-  (600.000 para HMAC-SHA256). O padrão passou a ser Argon2id; PBKDF2-SHA256
-  com 600k iterações é o fallback.
-* Fernet usa AES-128-CBC + HMAC-SHA256; migramos para AES-256-GCM (AEAD),
-  mantendo leitura de cofres legados para migração automática.
-* Escrita do cabeçalho agora é atômica (tmp + ``os.replace``) e com permissão
-  0600, evitando cofre corrompido por queda de energia e leitura por outros
-  usuários da máquina.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -59,17 +25,13 @@ except ImportError:  # pragma: no cover - depende da versão instalada
     Argon2id = None  # type: ignore[assignment]
     ARGON2_AVAILABLE = False
 
-
 FORMAT_VERSION = 2
 KEY_SIZE = 32          # AES-256
 NONCE_SIZE = 12        # 96 bits, recomendado para GCM
 SALT_SIZE = 16
 VERIFIER_PLAINTEXT = b"IronKeyPy/vault-verifier/v2"
 
-# Parâmetros padrão do Argon2id (RFC 9106, "second recommended option"
-# reforçada): 128 MiB e 4 passagens. Custa ~0,3-1,0 s em um desktop típico —
-# imperceptível no login e proibitivamente caro para ataque em GPU/ASIC,
-# justamente por exigir 128 MiB por tentativa paralela.
+# Parâmetros padrão do Argon2id (RFC 9106, "second recommended option" reforçada)
 ARGON2_DEFAULTS = {
     "algorithm": "argon2id",
     "time_cost": 4,
@@ -83,33 +45,25 @@ PBKDF2_DEFAULTS = {
     "iterations": 600_000,
 }
 
-
 class CryptoError(Exception):
     """Erro genérico de criptografia (mensagens seguras para exibir na UI)."""
-
 
 class VaultLockedError(CryptoError):
     """Operação exigiu o cofre destrancado."""
 
-
 class InvalidMasterPassword(CryptoError):
     """Senha mestre incorreta ou cabeçalho adulterado."""
-
 
 def _b64e(raw: bytes) -> str:
     return base64.b64encode(raw).decode("ascii")
 
-
 def _b64d(text: str) -> bytes:
     return base64.b64decode(text.encode("ascii"))
-
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-
 class CryptoManager:
-    """Gerencia o cabeçalho do cofre, a KEK derivada e a DEK de dados."""
 
     def __init__(self, config_file: str = "config.json"):
         self.config_file = config_file
@@ -153,12 +107,7 @@ class CryptoManager:
         self._header = header
 
     def _header_aad(self, header: Dict[str, Any]) -> bytes:
-        """
-        Dados associados que amarram a DEK embrulhada ao cabeçalho.
 
-        Qualquer alteração no salt ou nos parâmetros de KDF invalida a tag GCM,
-        de modo que um cofre adulterado é rejeitado em vez de aceito.
-        """
         material = {
             "format_version": header.get("format_version"),
             "kdf": header.get("kdf"),
@@ -252,11 +201,7 @@ class CryptoManager:
         self._dek = dek
 
     def unlock(self, master_password: str) -> bool:
-        """
-        Destranca o cofre. Retorna ``False`` para senha incorreta.
 
-        Falha fechada: qualquer inconsistência do cabeçalho resulta em recusa.
-        """
         if not self._header:
             return False
 
@@ -294,19 +239,14 @@ class CryptoManager:
 
     # Compatibilidade com a API antiga -----------------------------------
     def initialize(self, master_password: str) -> bool:
-        """Alias legado de :meth:`unlock` (mantido para não quebrar chamadas)."""
+
         try:
             return self.unlock(master_password)
         except CryptoError:
             return False
 
     def verify_master_password(self, master_password: str) -> bool:
-        """
-        Verifica a senha mestre **sem** manter o cofre destrancado.
 
-        Diferente da versão anterior, nunca retorna ``True`` por ausência de
-        dados de verificação.
-        """
         if not self._header:
             return False
         if self.is_legacy_vault():
@@ -328,12 +268,7 @@ class CryptoManager:
             SecretBytes(dek_raw).wipe()
 
     def change_master_password(self, current_password: str, new_password: str) -> bool:
-        """
-        Reembrulha a DEK com uma KEK nova.
 
-        O banco de dados **não** é reprocessado: os registros continuam cifrados
-        com a mesma DEK. A operação é atômica no nível do cabeçalho.
-        """
         if not self.verify_master_password(current_password):
             return False
         if self._dek is None and not self.unlock(current_password):
@@ -418,14 +353,7 @@ class CryptoManager:
             raise CryptoError("Não foi possível decifrar o registro.")
 
     def export_header(self) -> Dict[str, Any]:
-        """
-        Cópia do cabeçalho do cofre (KDF, ``vault_id``, DEK embrulhada, verifier).
 
-        É o que a entrada de dispositivo (``services/enrollment.py``) transfere:
-        dois dispositivos com o **mesmo** cabeçalho compartilham a DEK e, com ela,
-        a chave de sincronização. A DEK não é exposta em claro — continua
-        embrulhada pela KEK derivada da senha mestre.
-        """
         return json.loads(json.dumps(self._header))
 
     def vault_id_bytes(self) -> bytes:
@@ -439,17 +367,7 @@ class CryptoManager:
             raise CryptoError("Identificador do cofre inválido.") from exc
 
     def derive_subkey(self, purpose: bytes, length: int = KEY_SIZE) -> SecretBytes:
-        """
-        Deriva uma subchave da DEK via HKDF (usada por backups e pela sincronização).
 
-        ``vault_id`` entra como salt e ``purpose`` como ``info``: cada finalidade
-        recebe uma chave distinta, e uma subchave só vale para **este** cofre.
-
-        Consequências: nada novo para armazenar ou para o usuário digitar; trocar
-        a senha mestre não muda as subchaves (a DEK não muda); **rotacionar a DEK
-        invalida todas elas**, então quem depende de uma (a sincronização) precisa
-        tratar isso explicitamente.
-        """
         if self._dek is None:
             raise VaultLockedError("O cofre está trancado.")
         hkdf = HKDF(
@@ -501,12 +419,7 @@ class CryptoManager:
             return None
 
     def finalize_migration(self, master_password: str) -> None:
-        """
-        Converte um cofre v1 para v2 preservando a DEK temporária já em uso.
 
-        Deve ser chamado **depois** que o banco reescreveu todos os registros
-        com a DEK nova.
-        """
         if self._dek is None:
             raise VaultLockedError("O cofre está trancado.")
 

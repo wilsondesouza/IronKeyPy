@@ -1,13 +1,3 @@
-"""
-Auditoria de saúde do cofre.
-
-Funcionalidade ausente na versão anterior e considerada básica em qualquer
-gerenciador de senhas: o usuário não tinha como descobrir, sem abrir registro
-por registro, quais credenciais estão **reutilizadas**, **fracas**, **vazadas**
-ou **antigas** — exatamente os quatro fatores que causam comprometimento de
-conta na prática.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -232,13 +222,6 @@ class VaultAuditor:
 
     @staticmethod
     def _score(report: AuditReport, total: int) -> int:
-        """
-        Pontuação relativa ao tamanho do cofre.
-
-        Calibrada para que um cofre com 1 senha reutilizada em 10 fique perto de
-        90, e um cofre em que metade das senhas é fraca/reutilizada caia para a
-        faixa vermelha (< 50).
-        """
         penalty = (
             len(report.critical) * 15
             + len(report.warnings) * 6

@@ -1,14 +1,3 @@
-"""
-Proteção contra tentativas repetidas de destravar o cofre.
-
-Observação honesta sobre o modelo de ameaça: um atacante com acesso ao disco
-pode simplesmente apagar ``state.json`` para zerar o contador — a defesa real
-contra força bruta offline é o custo do Argon2id. Este módulo protege o cenário
-mais comum na prática: alguém sentado na máquina destravada tentando adivinhar
-a senha mestre. Por isso o atraso é aplicado *em memória* durante a sessão e
-também persistido entre execuções.
-"""
-
 from __future__ import annotations
 
 import json

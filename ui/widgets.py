@@ -1,19 +1,3 @@
-"""
-Widgets reutilizáveis: toasts, campos de segredo, medidor de força e diálogos.
-
-Problemas de UX corrigidos
---------------------------
-* Toda ação de sucesso disparava um ``messagebox`` modal — inclusive copiar uma
-  senha, a ação mais frequente do aplicativo. Isso exigia dois cliques para
-  copiar algo e roubava o foco. Substituído por *toasts* não-bloqueantes.
-* Não havia forma de **ver** a senha digitada/salva (campos sempre mascarados
-  ou sempre visíveis). Agora todo campo sensível alterna entre ocultar e
-    revelar, com reocultação automática.
-* ``CTkToplevel`` sem ``transient``/``grab_set`` corretos abria atrás da janela
-  principal e com o fundo branco padrão do Tk piscando por ~200 ms.
-* Nenhum diálogo respondia a ``Esc``/``Enter``.
-"""
-
 from __future__ import annotations
 
 from typing import Callable, List, Optional
@@ -29,7 +13,6 @@ from ui.theme import (
 # Toast
 # ---------------------------------------------------------------------------
 class ToastManager:
-    """Empilha notificações efêmeras no canto inferior direito da janela."""
 
     _KINDS = {
         "success": ("success", "✓"),
@@ -109,7 +92,6 @@ class ToastManager:
 # Campo de segredo com alternância de visibilidade
 # ---------------------------------------------------------------------------
 class SecretEntry(ctk.CTkFrame):
-    """Entry mascarado com botão 👁 e (opcionalmente) botão de cópia."""
 
     def __init__(self, master, placeholder: str = "", width: int = 320,
                  height: int = 38, revealed: bool = False, mono: bool = True,
@@ -183,7 +165,6 @@ class SecretEntry(ctk.CTkFrame):
 # Medidor de força
 # ---------------------------------------------------------------------------
 class StrengthMeter(ctk.CTkFrame):
-    """Barra + rótulo + tempo estimado de quebra + dicas acionáveis."""
 
     def __init__(self, master, show_details: bool = True, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
@@ -232,8 +213,7 @@ class StrengthMeter(ctk.CTkFrame):
 # Tooltip
 # ---------------------------------------------------------------------------
 class Tooltip:
-    """Dica de contexto — a versão anterior não tinha nenhuma affordance."""
-
+    
     def __init__(self, widget, text: str, delay: int = 550):
         self.widget = widget
         self.text = text
@@ -288,14 +268,6 @@ class Tooltip:
 # Diálogo modal base
 # ---------------------------------------------------------------------------
 class ModalDialog(ctk.CTkToplevel):
-    """
-    Base para todos os diálogos.
-
-    Encapsula as correções conhecidas do CustomTkinter: aplicar ``grab_set``
-    depois do primeiro ciclo de eventos (senão falha em X11), esconder a janela
-    até o layout estar pronto (evita o "flash" branco) e centralizar em relação
-    à janela-mãe.
-    """
 
     def __init__(self, parent, title: str, width: int = 520, height: int = 420,
                  resizable: bool = False):
@@ -312,11 +284,6 @@ class ModalDialog(ctk.CTkToplevel):
         center_on_parent(self, parent, width, height)
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
         self.bind("<Escape>", lambda _e: self.on_cancel())
-
-        # O rodapé é empacotado ANTES do corpo: no gerenciador ``pack`` do Tk o
-        # primeiro widget com ``expand=True`` consome todo o espaço restante, o
-        # que fazia os botões "Salvar/Cancelar" desaparecerem em diálogos com
-        # conteúdo alto (era exatamente o caso da tela de Configurações).
         self.footer = ctk.CTkFrame(self, fg_color="transparent")
         self.footer.pack(side="bottom", fill="x", padx=22, pady=(0, 18))
 
@@ -389,13 +356,6 @@ class ModalDialog(ctk.CTkToplevel):
 
 
 class ConfirmDialog(ModalDialog):
-    """
-    Confirmação destrutiva com digitação obrigatória.
-
-    Ações irreversíveis (apagar cofre, sobrescrever senhas, substituir cofre)
-    exigem digitação explícita para evitar cliques acidentais. O tamanho da
-    janela é calculado dinamicamente para comportar o texto e o campo de input.
-    """
 
     def __init__(self, parent, title: str, message: str, confirm_word: str = "",
                  confirm_text: str = "Confirmar", danger: bool = True,
@@ -456,7 +416,6 @@ class ConfirmDialog(ModalDialog):
 
 
 class TextPromptDialog(ModalDialog):
-    """Solicita um texto (opcionalmente mascarado) — substitui ``simpledialog``."""
 
     def __init__(self, parent, title: str, message: str, secret: bool = False,
                  confirm_text: str = "Confirmar", initial: str = ""):

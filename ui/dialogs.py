@@ -1,14 +1,3 @@
-"""
-Diálogos de criação/edição de registro, configurações e troca de senha mestre.
-
-Funcionalidades que simplesmente não existiam na versão anterior:
-  * **editar** um registro salvo (só dava para criar e apagar);
-  * campos de **URL, categoria, notas e TOTP**;
-  * **histórico de senhas**;
-  * **troca da senha mestre**;
-  * **tela de configurações** (auto-bloqueio, área de transferência, tema).
-"""
-
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
@@ -274,13 +263,6 @@ class PasswordHistoryDialog(ModalDialog):
 
 
 class ChangeMasterPasswordDialog(ModalDialog):
-    """
-    Troca da senha mestre — inexistente na versão anterior.
-
-    Graças ao envelope KEK/DEK a operação apenas reembrulha a chave de dados:
-    o banco não precisa ser reescrito, então não há janela em que os registros
-    fiquem parcialmente convertidos.
-    """
 
     def __init__(self, parent, generator: PasswordGenerator,
                  verify: Callable[[str], bool]):
@@ -369,7 +351,6 @@ class ChangeMasterPasswordDialog(ModalDialog):
 
 
 class SettingsDialog(ModalDialog):
-    """Preferências de segurança e aparência (antes, constantes no código)."""
 
     def __init__(self, parent, settings: Settings, kdf_description: str,
                  data_dir: str, on_open_folder: Callable[[], None],
@@ -499,17 +480,6 @@ class SettingsDialog(ModalDialog):
     # ------------------------------------------------------------------
     def _build_sync_tab(self, parent, settings: Settings, status: Dict[str, object],
                         on_pick_sync_dir) -> None:
-        """
-        Sincronização pelo "meio-termo": uma pasta que já é sincronizada pelo
-        serviço de nuvem do próprio usuário. Nenhum servidor nosso é operado, e
-        nenhum conteúdo sai daqui sem cifra — por isso o texto é explícito sobre o
-        que o provedor de nuvem consegue ver.
-
-        Ordem dos blocos pensada para telas pequenas: **situação e ações primeiro**.
-        Antes, os botões "Sincronizar agora" e "Ver conflitos" ficavam abaixo da
-        dobra (a aba tem ~975 px de conteúdo numa área de ~517 px) e exigiam rolar
-        a tela para algo que o usuário faz o tempo todo.
-        """
         self.action: Optional[str] = None
         self.sync_dir_value = settings.sync_dir
 
@@ -727,14 +697,6 @@ class SettingsDialog(ModalDialog):
 
 
 class ConflictsDialog(ModalDialog):
-    """
-    Revisão dos conflitos de sincronização.
-
-    Decisão D2: quando o mesmo registro é editado nos dois dispositivos, as duas
-    versões sobrevivem — o perdedor vira um registro novo, com "conflito" no
-    título. Este diálogo existe para que o usuário **veja** isso e decida, em vez
-    de descobrir por acaso meses depois.
-    """
 
     def __init__(self, parent, conflicts: List[Dict], on_open_entry: Callable[[str], None]):
         super().__init__(parent, "Conflitos de sincronização", width=720, height=560,

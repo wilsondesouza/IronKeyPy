@@ -1,5 +1,3 @@
-"""Paleta, tipografia e helpers visuais compartilhados pela interface."""
-
 from __future__ import annotations
 
 import sys
@@ -11,8 +9,7 @@ from services.app_paths import resource_path
 
 # ---------------------------------------------------------------------------
 # Paleta (light, dark) — contraste verificado contra os fundos do CustomTkinter.
-# A versão anterior usava nomes como "yellow" e "lightgreen", ilegíveis sobre o
-# tema escuro (contraste < 3:1) e sem par para o tema claro.
+
 # ---------------------------------------------------------------------------
 COLORS = {
     "bg_card":       ("#F1F3F5", "#242731"),
@@ -31,13 +28,10 @@ COLORS = {
     "danger_hover":  ("#9E2126", "#C93B40"),
     "neutral":       ("#6B7280", "#4A4F5C"),
     "neutral_hover": ("#565C66", "#5A6070"),
-    # Texto sobre botões âmbar: branco no tema claro (âmbar escuro) e quase
-    # preto no tema escuro (âmbar claro). Sem isso o rótulo ficava ilegível.
     "on_warning":    ("#FFFFFF", "#1A1200"),
 }
 
-# Escala de força: precisa ser distinguível também por quem não diferencia
-# vermelho/verde — por isso a UI sempre acompanha rótulo textual e ícone.
+# Escala de força
 STRENGTH_COLORS = (
     (28,  ("#C62A2F", "#E5484D")),   # Muito Fraca
     (40,  ("#B54708", "#F07C29")),   # Fraca
@@ -73,26 +67,15 @@ def font(size: int = 13, weight: str = "normal", mono: bool = False) -> ctk.CTkF
         return ctk.CTkFont(family=family, size=size, weight=weight)
     return ctk.CTkFont(size=size, weight=weight)
 
-
 # ---------------------------------------------------------------------------
 # Glifos com degradação elegante
-#
-# A versão anterior usava emojis coloridos direto no texto dos botões. Em
-# Windows/macOS funciona; em muitas distribuições Linux (e em contêineres/VMs
-# sem fonte de emoji instalada) cada emoji vira um retângulo vazio — a interface
-# ficava cheia de "tofu" e os botões, indistinguíveis entre si.
-#
-# Detectamos a presença de uma fonte de emoji uma única vez e, quando ela não
-# existe, trocamos para símbolos garantidos na DejaVu Sans (padrão do Linux).
 # ---------------------------------------------------------------------------
+
 EMOJI_FONT_FAMILIES = (
     "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
     "Noto Emoji", "Twemoji Mozilla", "EmojiOne Color", "JoyPixels",
 )
 
-# A coluna "alternativa" foi conferida contra a tabela cmap da DejaVu Sans
-# (fonte padrão do Tk em Linux) com fontTools; medir a largura do glifo em
-# tempo de execução não serve, porque o retângulo .notdef também tem largura.
 GLYPHS = {
     #  nome          emoji   alternativa (garantida na DejaVu Sans)
     "shield":       ("🛡",   "◈"),
@@ -138,13 +121,6 @@ _emoji_supported: bool | None = None
 
 
 def emoji_supported() -> bool:
-    """
-    Detecta se o sistema tem fonte capaz de desenhar emojis.
-
-    O resultado só é memorizado quando a consulta é possível — ``tkfont.families()``
-    exige uma raiz Tk viva, e cachear um ``False`` obtido antes disso desligaria
-    os emojis também no Windows/macOS.
-    """
     global _emoji_supported
     if _emoji_supported is not None:
         return _emoji_supported
@@ -180,15 +156,6 @@ _icon_photo = None
 
 
 def apply_icon(window) -> None:
-    """
-    Define o ícone da janela sem quebrar em nenhuma plataforma.
-
-    Bug corrigido: ``wm_iconbitmap("assets/images/icon.ico")`` era chamado com
-    caminho relativo e sem tratamento de erro. Em Linux/macOS o formato .ico não
-    é suportado e, num clone limpo (a pasta ``assets`` está no .gitignore), o
-    arquivo sequer existe — o aplicativo **fechava com TclError antes de abrir
-    a primeira tela**.
-    """
     global _icon_photo
 
     ico = resource_path("assets", "images", "icon.ico")
@@ -216,13 +183,6 @@ def apply_icon(window) -> None:
 
 
 def center_on_parent(window, parent, width: int, height: int) -> None:
-    """
-    Centraliza relativa à janela-mãe e mantém o resultado dentro da tela.
-
-    A versão anterior centralizava sempre no *centro da tela* e usava tamanhos
-    fixos (1200x800), o que jogava parte da janela para fora em notebooks de
-    1366x768 e em monitores secundários.
-    """
     window.update_idletasks()
     screen_w = window.winfo_screenwidth()
     screen_h = window.winfo_screenheight()

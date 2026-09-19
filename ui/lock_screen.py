@@ -1,21 +1,3 @@
-"""
-Tela de senha mestre (criação e desbloqueio).
-
-Bugs graves corrigidos
-----------------------
-* ``MasterPasswordDialog`` herdava de ``ctk.CTk`` — ou seja, era uma **segunda
-  janela-raiz**. ``IronKeyPy.authenticate()`` a instanciava como
-  ``MasterPasswordDialog(self, is_setup=False)``, passando a janela principal
-  no lugar do parâmetro ``is_setup`` (que virava "verdadeiro"); e ``main()``
-  criava uma raiz nova a cada tentativa de senha errada, vazando interpretadores
-  Tk. Agora existe **uma única raiz** e esta tela é um ``CTkFrame`` trocado
-  dentro dela — o que também elimina o ciclo ``withdraw``/``deiconify`` com
-  ``wait_window`` aninhado usado no auto-bloqueio.
-* Senha mestre exigia apenas 6 caracteres, sem medidor e sem aviso de que ela é
-  **irrecuperável**.
-* Não havia limite de tentativas (força bruta local ilimitada).
-"""
-
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -43,10 +25,6 @@ class LockScreen(ctk.CTkFrame):
         self.throttle = throttle
         self.generator = generator or PasswordGenerator()
         self._countdown_job: Optional[str] = None
-
-        # Contêiner rolável: em janelas baixas (netbooks, 1366x768 com barra de
-        # tarefas) o cartão de login era cortado e o botão "Criar cofre" ficava
-        # inalcançável.
         viewport = ctk.CTkScrollableFrame(self, fg_color="transparent")
         viewport.pack(fill="both", expand=True)
 

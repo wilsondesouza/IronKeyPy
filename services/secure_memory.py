@@ -1,11 +1,3 @@
-"""
-Utilitários de manuseio de segredos em memória.
-
-Python não permite controle total sobre a memória (strings são imutáveis e o GC
-pode copiá-las), mas podemos reduzir a janela de exposição usando ``bytearray``
-mutável e zerando o conteúdo assim que ele deixa de ser necessário.
-"""
-
 from __future__ import annotations
 
 import hmac
@@ -13,7 +5,6 @@ from typing import Iterable
 
 
 class SecretBytes:
-    """Buffer mutável que pode ser zerado explicitamente (``with`` suportado)."""
 
     __slots__ = ("_buf", "_wiped")
 
@@ -60,5 +51,4 @@ def wipe_all(secrets: Iterable[SecretBytes | None]) -> None:
 
 
 def constant_time_equals(a: bytes, b: bytes) -> bool:
-    """Comparação em tempo constante (evita timing attacks)."""
     return hmac.compare_digest(a, b)

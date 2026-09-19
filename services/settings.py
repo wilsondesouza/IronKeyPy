@@ -1,11 +1,3 @@
-"""
-Preferências do usuário, persistidas em ``settings.json``.
-
-Antes, valores como o tempo de auto-bloqueio (300 s) e o de limpeza da área de
-transferência (30 s) eram constantes no código — o usuário não tinha controle
-sobre o principal trade-off entre segurança e conveniência do produto.
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,7 +19,6 @@ def _is_device_id(value: Any) -> bool:
 
 
 def default_device_label() -> str:
-    """Rótulo inicial do dispositivo (só exibição; não é segredo)."""
     host = platform.node() or ""
     system = {"win32": "Windows", "darwin": "macOS", "linux": "Linux"}.get(
         "win32" if os.name == "nt" else ("darwin" if platform.system() == "Darwin" else "linux"),
@@ -106,7 +97,6 @@ class Settings:
         return instance.sanitized()
 
     def sanitized(self) -> "Settings":
-        """Impede valores inseguros/absurdos vindos de edição manual do JSON."""
         self.auto_lock_seconds = _clamp(self.auto_lock_seconds, 0, 24 * 3600)
         self.clipboard_clear_seconds = _clamp(self.clipboard_clear_seconds, 0, 600)
         self.max_unlock_attempts = _clamp(self.max_unlock_attempts, 3, 20)
@@ -131,11 +121,9 @@ class Settings:
 
     @property
     def device_name(self) -> str:
-        """Rótulo do dispositivo, com um padrão derivado do sistema se vazio."""
         return self.device_label or default_device_label()
 
     def sync_configured(self) -> bool:
-        """Sincronização pronta para uso (ativada e com pasta definida)."""
         return bool(self.sync_enabled and self.sync_dir and os.path.isdir(self.sync_dir))
 
     def save(self, path: str | None = None) -> None:

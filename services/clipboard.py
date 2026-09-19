@@ -1,17 +1,3 @@
-"""
-Área de transferência com limpeza automática e verificação de conteúdo.
-
-Correções em relação à versão anterior
---------------------------------------
-* ``clear_clipboard`` chamava ``self.create_widgets()`` ao final — a cada 30 s
-  a interface inteira era **reconstruída por cima da anterior**, duplicando
-  abas e vazando widgets. Era o bug visual mais grave do projeto.
-* A limpeza apagava a área de transferência mesmo que o usuário já tivesse
-  copiado outra coisa. Agora só limpamos se o conteúdo ainda for o segredo.
-* ``pyperclip`` levanta ``PyperclipException`` em Linux sem xclip/xsel; havia
-  crash não tratado. Agora há fallback para a área de transferência do Tk.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -25,18 +11,10 @@ except Exception:  # pragma: no cover
     pyperclip = None  # type: ignore[assignment]
     PYPERCLIP_AVAILABLE = False
 
-
 class ClipboardError(RuntimeError):
     pass
 
-
 class ClipboardManager:
-    """
-    Gerencia cópia temporária de segredos.
-
-    ``schedule`` recebe ``(delay_ms, callback)`` — normalmente ``widget.after``
-    — para que o timer rode no laço de eventos do Tk (thread-safe).
-    """
 
     def __init__(self, tk_widget, schedule: Callable[[int, Callable], str],
                  cancel: Callable[[str], None]):
@@ -116,12 +94,7 @@ class ClipboardManager:
             self._timer = None
 
     def clear(self, force: bool = True) -> bool:
-        """
-        Limpa a área de transferência.
 
-        Com ``force=False`` só limpa se o conteúdo ainda for o segredo copiado,
-        preservando qualquer coisa que o usuário tenha copiado depois.
-        """
         self.cancel_timer()
         should_clear = force or (self._digest and self._hash(self._read()) == self._digest)
         if should_clear:

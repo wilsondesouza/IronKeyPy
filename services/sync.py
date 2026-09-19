@@ -1,32 +1,3 @@
-"""
-Motor de sincronização entre dispositivos — pasta em nuvem do usuário.
-
-Estratégia ("meio-termo", ver ``docs/PLANO-MULTIPLATAFORMA.md``)
-----------------------------------------------------------------
-Nada de servidor próprio. O usuário aponta o IronKey Py para uma pasta que **já é
-sincronizada** pelo cliente de nuvem que ele escolheu (Google Drive, OneDrive,
-Dropbox, Syncthing…) e o aplicativo mantém ali dois arquivos:
-
-    ironkeypy-sync.ikbak            conteúdo cifrado do cofre inteiro
-    ironkeypy-sync.manifest.json    gatilho pequeno: geração + SHA-256 do anterior
-
-Três decisões estruturais, todas herdadas do contrato
-(``docs/CONTRATO-DE-SINCRONIZACAO.md``):
-
-1. **Mesclar, não copiar.** Sobrescrever o arquivo faz o último dispositivo a
-   sincronizar apagar o que o outro fez offline. Aqui o estado é mesclado
-   registro por registro, com ``rev`` como autoridade — e não o relógio, que
-   pode estar errado.
-2. **Exclusão vira tombstone.** Apagar a linha faria o registro "ressuscitar" no
-   dispositivo que estava offline. A exclusão é um fato versionado.
-3. **O manifesto é o gatilho.** Clientes de nuvem gravam arquivos grandes em
-   etapas; ler o arquivo grande no meio de um upload produz lixo. O aplicativo só
-   reage ao manifesto, e só lê o conteúdo quando o hash e o tamanho conferem.
-
-Nada aqui inventa primitiva criptográfica: AES-256-GCM e HKDF-SHA256 sobre a
-mesma DEK do cofre, com subchaves separadas por domínio.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -73,14 +44,11 @@ CLOCK_TOLERANCE_SECONDS = 24 * 3600
 class SyncError(Exception):
     """Falha de sincronização com mensagem pronta para exibir ao usuário."""
 
-
 class SyncFormatError(SyncError):
     """Arquivo/estrutura inválida ou de versão não suportada."""
 
-
 @dataclass
 class SyncOutcome:
-    """Resultado de uma tentativa de sincronização (exibido/widgets e testes)."""
 
     status: str = "noop"          # ok | noop | disabled | error
     reason: str = "manual"        # manual | unlock | lock | timer
@@ -173,14 +141,7 @@ def _clone(entry: VaultEntry) -> VaultEntry:
 
 
 def _conflict_uid(uid: str, loser_hash: str, device_id: str) -> str:
-    """
-    Identificador **determinístico** para a cópia de conflito.
 
-    Determinístico de propósito: se o mesmo conflito for reprocessado (arquivo
-    remoto antigo ainda presente, segunda passada), a mesma cópia é reconhecida
-    em vez de gerar duplicatas novas a cada passagem. É isso que torna o merge
-    idempotente (vetor T-07).
-    """
     material = f"ironkeypy.conflict.v1|{uid}|{loser_hash}|{device_id}".encode("utf-8")
     return hashlib.sha256(material).hexdigest()[:32]
 
@@ -238,7 +199,6 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 def _fsync_dir(directory: str) -> None:
-    """Garante que o rename sobrevive a queda de energia (no-op onde não suportado)."""
     if os.name != "posix":
         return
     try:
@@ -255,12 +215,7 @@ def _fsync_dir(directory: str) -> None:
 
 def build_payload(entries: List[VaultEntry], devices: List[Dict[str, Any]],
                   tombstone_max_age_days: int) -> Dict[str, Any]:
-    """
-    Monta o conteúdo do arquivo de sincronização.
 
-    Registros ilegíveis (falha de integridade local) ficam de fora: propagar lixo
-    para os outros dispositivos só multiplicaria o problema.
-    """
     serializable = []
     for entry in entries:
         if entry.title.endswith(UNREADABLE_TITLE):
@@ -281,7 +236,7 @@ def build_payload(entries: List[VaultEntry], devices: List[Dict[str, Any]],
 
 def encrypt_payload(payload: Dict[str, Any], crypto, vault_id: str,
                     generation: int, device_id: str, app: str) -> Dict[str, Any]:
-    """Cifra o conteúdo e devolve o envelope completo (cabeçalho + data)."""
+
     raw = gzip.compress(_canonical(payload))
     header = {
         "magic": SYNC_MAGIC,
@@ -302,14 +257,7 @@ def encrypt_payload(payload: Dict[str, Any], crypto, vault_id: str,
 
 def write_remote(directory: str, payload: Dict[str, Any], crypto, vault_id: str,
                  device_id: str, generation: int, app: str) -> Dict[str, Any]:
-    """
-    Escreve o arquivo grande **e depois** o manifesto.
 
-    A ordem importa: se algo falhar no meio, sobra um arquivo grande sem
-    manifesto novo — que os outros dispositivos simplesmente ignoram, porque o
-    hash do manifesto não confere. Nunca o contrário (manifesto apontando para
-    conteúdo incompleto).
-    """
     folder = Path(directory)
     payload_path = folder / SYNC_PAYLOAD_NAME
     manifest_path = folder / MANIFEST_NAME
@@ -338,13 +286,6 @@ def write_remote(directory: str, payload: Dict[str, Any], crypto, vault_id: str,
 
 @dataclass
 class RemoteSnapshot:
-    """
-    Melhor estado remoto disponível.
-
-    ``payload`` pode ser ``None``: quando o manifesto é inválido ou o conteúdo
-    está incompleto, **os avisos ainda precisam chegar à interface** — era um bug
-    real devolver ``None`` e perder a explicação do porquê.
-    """
 
     payload: Optional[Dict[str, Any]]
     generation: int
@@ -424,13 +365,7 @@ def _validate_manifest(manifest: Dict[str, Any], payload_path: Path, crypto,
 
 
 def _conflict_candidates(directory: str) -> List[Path]:
-    """
-    Cópias que clientes de nuvem criam ao detectar escrita concorrente
-    (``ironkeypy-sync (1).ikbak``, ``…-conflito-….ikbak``).
 
-    Tratar isso como lixo jogaria fora alterações que o outro dispositivo
-    realmente fez. Aqui elas voltam para o merge.
-    """
     folder = Path(directory)
     base = Path(SYNC_PAYLOAD_NAME).stem
     patterns = (f"{base} (*).ikbak", f"{base}-conflito*.ikbak", f"*{base}*conflito*.ikbak")
@@ -445,13 +380,7 @@ def _conflict_candidates(directory: str) -> List[Path]:
 
 def read_remote(directory: str, crypto, vault_id: str,
                 consume_conflicts: bool = True) -> RemoteSnapshot:
-    """
-    Lê o melhor estado remoto disponível: o manifesto válido e/ou cópias de conflito.
 
-    Nunca levanta exceção por conteúdo ruim: arquivo ausente, manifesto inválido
-    ou upload em andamento são situações **normais**, não erros. Nesses casos
-    devolve um instantâneo sem conteúdo, com os avisos do que foi ignorado.
-    """
     folder = Path(directory)
     warnings: List[str] = []
     candidates: List[Tuple[int, Dict[str, Any], str]] = []
@@ -487,7 +416,6 @@ def read_remote(directory: str, crypto, vault_id: str,
     return RemoteSnapshot(payload=payload, generation=generation,
                           source_file=source, warnings=warnings)
 
-
 # ----------------------------------------------------------------------
 # Mesclagem
 # ----------------------------------------------------------------------
@@ -497,7 +425,6 @@ class MergeResult:
     conflicts: List[Dict[str, Any]] = field(default_factory=list)
     resurrections: List[Dict[str, Any]] = field(default_factory=list)
     changed: bool = False
-
 
 def merge_states(local: List[VaultEntry], remote: List[VaultEntry], *,
                  device_id: str, device_label: str = "",
@@ -597,19 +524,16 @@ def merge_states(local: List[VaultEntry], remote: List[VaultEntry], *,
     return MergeResult(entries=entries, conflicts=conflicts,
                        resurrections=resurrections, changed=changed)
 
-
 def _conflict_title(title: str, device_label: str, when: str) -> str:
     stamp = (when or "")[:16].replace("T", " ")
     label = _strip_accents(device_label or "outro dispositivo")
     suffix = f" (conflito: {label} {stamp})".strip()
     return (title or "(sem título)")[:180] + suffix
 
-
 def _strip_accents(text: str) -> str:
     return "".join(
         ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
     )
-
 
 def _state_fingerprint(entries: Iterable[VaultEntry]) -> List[tuple]:
     """Assinatura do estado, para detectar mudança real (independe de ordem)."""
@@ -617,7 +541,6 @@ def _state_fingerprint(entries: Iterable[VaultEntry]) -> List[tuple]:
         (e.uid, max(1, int(e.rev or 1)), content_hash(e), bool(e.is_deleted))
         for e in entries
     )
-
 
 # ----------------------------------------------------------------------
 # Estado de dispositivos
@@ -641,12 +564,10 @@ def merge_devices(remote_devices: List[Dict[str, Any]], device_id: str,
     by_id[device_id] = current
     return [by_id[key] for key in sorted(by_id)]
 
-
 # ----------------------------------------------------------------------
 # Orquestração
 # ----------------------------------------------------------------------
 class SyncEngine:
-    """Liga banco, cofre e pasta sincronizada. Sem estado próprio além das referências."""
 
     def __init__(self, database, crypto_manager, settings, app_version: str = ""):
         self.db = database
@@ -822,7 +743,6 @@ class SyncEngine:
             "tombstones": len(self.db.get_tombstones()) if configured else 0,
         }
 
-
 def _entries_from_payload(payload: Dict[str, Any]) -> List[VaultEntry]:
     """Converte o JSON do arquivo de sync em registros (tolerante a campos ausentes)."""
     allowed = set(VaultEntry.__annotations__) - {"row_id", "rev", "deleted_at", "device_id"}
@@ -845,13 +765,11 @@ def _entries_from_payload(payload: Dict[str, Any]) -> List[VaultEntry]:
         entries.append(entry)
     return entries
 
-
 def _int_or_zero(value: Any) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
 
 def sync_filename_pattern() -> str:
     """Padrão documentado dos arquivos criados na pasta do usuário (ajuda/UI)."""

@@ -1,22 +1,3 @@
-"""
-Geração e avaliação de senhas.
-
-Melhorias em relação à versão anterior
---------------------------------------
-* **Força medida por entropia real** (bits) em vez de uma pontuação arbitrária
-  que dava "Muito Forte" para ``Aa1!Aa1!Aa1!``. O cálculo combina entropia do
-  conjunto de caracteres com penalidades por padrões (repetição, sequências,
-  palavras comuns, datas) — a nota agora reflete resistência a ataque real.
-* **Frases-senha (Diceware)**: mais fáceis de digitar/memorizar e com entropia
-  auditável — essenciais para a *senha mestre*, que precisa ser lembrada.
-* **Exclusão de caracteres ambíguos** (0/O/l/1/I) e opção "sem símbolos
-  problemáticos" para sites que restringem pontuação.
-* **Distribuição uniforme garantida**: a versão anterior colocava os caracteres
-  obrigatórios no início da lista antes de embaralhar; o embaralhamento era
-  correto, mas o corte ``required_chars[:length]`` para senhas curtas
-  descartava classes de forma enviesada. Agora usamos rejeição por reamostragem.
-"""
-
 from __future__ import annotations
 
 import math
@@ -41,7 +22,6 @@ COMMON_PATTERNS = (
 )
 KEYBOARD_ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890")
 
-
 @dataclass
 class GeneratorOptions:
     length: int = 20
@@ -52,7 +32,6 @@ class GeneratorOptions:
     exclude_ambiguous: bool = False
     url_safe_symbols: bool = False
     custom_exclude: str = ""
-
 
 @dataclass
 class StrengthReport:
@@ -66,7 +45,6 @@ class StrengthReport:
     @property
     def is_acceptable(self) -> bool:
         return self.entropy_bits >= 60
-
 
 class PasswordGenerator:
     def __init__(self) -> None:
@@ -106,13 +84,7 @@ class PasswordGenerator:
         return pools
 
     def generate(self, opts: GeneratorOptions) -> str:
-        """
-        Gera senha garantindo ao menos um caractere de cada classe escolhida.
 
-        Usa *rejection sampling*: sorteia a senha inteira de forma uniforme e
-        repete enquanto alguma classe exigida estiver ausente. Isso preserva a
-        distribuição uniforme (não introduz viés posicional).
-        """
         pools = self._pools(opts)
         length = max(len(pools), min(int(opts.length), 256))
         alphabet = "".join(pools)
@@ -294,12 +266,7 @@ class PasswordGenerator:
 
     @staticmethod
     def _crack_time(bits: float) -> str:
-        """
-        Estimativa para um atacante *offline* com hardware dedicado.
 
-        Referência: ~1e12 tentativas/s (cluster de GPUs contra hash rápido).
-        Em média metade do espaço precisa ser percorrido.
-        """
         guesses_per_second = 1e12
         seconds = (2 ** bits) / 2 / guesses_per_second
         if seconds < 1:
