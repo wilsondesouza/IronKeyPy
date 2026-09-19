@@ -1,3 +1,22 @@
+"""
+Verificação de vazamentos via Have I Been Pwned (k-anonymity).
+
+Melhorias em relação à versão anterior
+--------------------------------------
+* **Add-Padding**: sem esse cabeçalho a HIBP devolve respostas de tamanho
+  variável; um observador de rede (ou o próprio CDN) consegue inferir o prefixo
+  consultado pelo tamanho da resposta. Com padding as respostas ficam
+  uniformizadas — recomendação oficial da API.
+* **Sessão HTTP reutilizada + retry com backoff** e tratamento de HTTP 429
+  (limite de taxa), que antes virava uma exceção genérica.
+* **Cache em memória por prefixo**, essencial para a auditoria do cofre inteiro:
+  antes, auditar 50 senhas faria 50 requisições sequenciais.
+* **Parsing defensivo**: uma linha malformada da API derrubava a verificação
+  inteira com ``ValueError`` do ``split(':')``.
+* **Timeout e verificação TLS explícitos** e mensagens de erro acionáveis.
+* A senha nunca sai da máquina — apenas 5 caracteres hexadecimais do SHA-1.
+"""
+
 from __future__ import annotations
 
 import hashlib

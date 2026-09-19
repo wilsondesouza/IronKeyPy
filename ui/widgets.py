@@ -1,3 +1,19 @@
+"""
+Widgets reutilizáveis: toasts, campos de segredo, medidor de força e diálogos.
+
+Problemas de UX corrigidos
+--------------------------
+* Toda ação de sucesso disparava um ``messagebox`` modal — inclusive copiar uma
+  senha, a ação mais frequente do aplicativo. Isso exigia dois cliques para
+  copiar algo e roubava o foco. Substituído por *toasts* não-bloqueantes.
+* Não havia forma de **ver** a senha digitada/salva (campos sempre mascarados
+  ou sempre visíveis). Agora todo campo sensível alterna entre ocultar e
+    revelar, com reocultação automática.
+* ``CTkToplevel`` sem ``transient``/``grab_set`` corretos abria atrás da janela
+  principal e com o fundo branco padrão do Tk piscando por ~200 ms.
+* Nenhum diálogo respondia a ``Esc``/``Enter``.
+"""
+
 from __future__ import annotations
 
 from typing import Callable, List, Optional
@@ -376,35 +392,64 @@ class ConfirmDialog(ModalDialog):
     """
     Confirmação destrutiva com digitação obrigatória.
 
-    Ações irreversíveis (apagar cofre, sobrescrever senhas) usavam apenas
-    ``askyesno`` — um clique acidental bastava.
+    Ações irreversíveis (apagar cofre, sobrescrever senhas, substituir cofre)
+    exigem digitação explícita para evitar cliques acidentais. O tamanho da
+    janela é calculado dinamicamente para comportar o texto e o campo de input.
     """
 
     def __init__(self, parent, title: str, message: str, confirm_word: str = "",
-                 confirm_text: str = "Confirmar", danger: bool = True):
-        super().__init__(parent, title, width=520, height=300 if confirm_word else 240)
+                 confirm_text: str = "Confirmar", danger: bool = True,
+                 width: int = 560, height: Optional[int] = None):
+        if height is None:
+            # Estima altura necessária com base nas quebras de linha e texto
+            lines = sum(max(1, len(line) // 60 + 1) for line in message.splitlines()) if message else 1
+            calculated = 210 + lines * 19 + (90 if confirm_word else 0)
+            height = max(340 if confirm_word else 240, min(620, calculated))
+
+        super().__init__(parent, title, width=width, height=height)
         self.confirm_word = confirm_word
+        self.confirm_text = confirm_text
+        self._entry: Optional[ctk.CTkEntry] = None
 
         self.add_title(title, message)
-        self._entry = None
+
         if confirm_word:
+            prompt_frame = ctk.CTkFrame(self.body, fg_color="transparent")
+            prompt_frame.pack(fill="x", pady=(10, 0))
+
             ctk.CTkLabel(
-                self.body, text=f'Digite "{confirm_word}" para confirmar:',
+                prompt_frame, text=f'Digite "{confirm_word}" para confirmar:',
                 font=font(12, "bold"), anchor="w",
-            ).pack(fill="x", pady=(8, 4))
-            self._entry = ctk.CTkEntry(self.body, height=38, font=font(13))
+            ).pack(fill="x", pady=(0, 4))
+
+            self._entry = ctk.CTkEntry(
+                prompt_frame, height=38, font=font(13),
+                placeholder_text=f'Digite exatamente "{confirm_word}"',
+            )
             self._entry.pack(fill="x")
             self._entry.bind("<Return>", lambda _e: self._confirm())
+            self._entry.bind("<KeyRelease>", self._on_key_release)
 
-        self.add_button_row(confirm_text, self._confirm, danger=danger)
+        self._confirm_btn = self.add_button_row(confirm_text, self._confirm, danger=danger)
         self.finish_setup()
         if self._entry:
             self.after(120, self._entry.focus_set)
 
+    def _on_key_release(self, _event=None) -> None:
+        if not self.confirm_word or self._entry is None:
+            return
+        typed = self._entry.get().strip()
+        if typed.upper() == self.confirm_word.upper():
+            self._entry.configure(border_color=color("primary"), border_width=2)
+        else:
+            self._entry.configure(border_color=color("border"), border_width=1)
+
     def _confirm(self) -> None:
         if self.confirm_word and self._entry is not None:
-            if self._entry.get().strip().upper() != self.confirm_word.upper():
+            typed = self._entry.get().strip()
+            if typed.upper() != self.confirm_word.upper():
                 self._entry.configure(border_color=color("danger"), border_width=2)
+                self._entry.focus_set()
                 return
         self.result = True
         self.close()

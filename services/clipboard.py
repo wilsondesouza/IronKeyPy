@@ -1,3 +1,17 @@
+"""
+Área de transferência com limpeza automática e verificação de conteúdo.
+
+Correções em relação à versão anterior
+--------------------------------------
+* ``clear_clipboard`` chamava ``self.create_widgets()`` ao final — a cada 30 s
+  a interface inteira era **reconstruída por cima da anterior**, duplicando
+  abas e vazando widgets. Era o bug visual mais grave do projeto.
+* A limpeza apagava a área de transferência mesmo que o usuário já tivesse
+  copiado outra coisa. Agora só limpamos se o conteúdo ainda for o segredo.
+* ``pyperclip`` levanta ``PyperclipException`` em Linux sem xclip/xsel; havia
+  crash não tratado. Agora há fallback para a área de transferência do Tk.
+"""
+
 from __future__ import annotations
 
 import hashlib

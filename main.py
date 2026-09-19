@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+"""
+IronKey Py — gerenciador e gerador de senhas local.
+
+Ponto de entrada e controlador da aplicação.
+
+Correções estruturais em relação à versão anterior
+---------------------------------------------------
+* **Uma única janela-raiz Tk.** Antes, ``MasterPasswordDialog`` herdava de
+  ``ctk.CTk`` e ``main()`` criava uma raiz nova a cada tentativa de senha —
+  vazando interpretadores Tk, quebrando o escalonamento do CustomTkinter e
+  produzindo o bug em que a janela de login reaparecia atrás da principal.
+* **Auto-bloqueio sem laços aninhados.** Antes usava
+  ``withdraw`` + ``CTkToplevel`` + ``wait_window`` dentro do laço de eventos,
+  o que congelava a aplicação se o bloqueio disparasse com um diálogo aberto.
+  Agora a raiz simplesmente troca o frame exibido.
+* **A chave nunca fica em memória depois do bloqueio**: a DEK é zerada e a
+  instância do banco perde acesso.
+* Erros deixaram de ser impressos no ``stdout`` (invisíveis em app empacotado)
+  e passaram a virar mensagens acionáveis na interface.
+"""
+
 from __future__ import annotations
 
 import os
@@ -14,6 +35,8 @@ import customtkinter as ctk
 from api.pwned_checker import PwnedChecker, PwnedError
 from database.database import PasswordDatabase, VaultEntry
 from services import backup as backup_service
+from services import enrollment as enrollment_service
+from services import sync as sync_service
 from services import totp as totp_service
 from services.app_paths import (
     get_app_data_dir,
@@ -29,6 +52,7 @@ from services.settings import Settings
 from services.vault_audit import VaultAuditor
 from ui.dialogs import (
     ChangeMasterPasswordDialog,
+    ConflictsDialog,
     EntryDialog,
     HelpDialog,
     PasswordHistoryDialog,
@@ -39,10 +63,12 @@ from ui.theme import apply_icon, color
 from ui.vault_view import VaultView
 from ui.widgets import ConfirmDialog, TextPromptDialog, ToastManager
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 SHORTCUTS = {
     "Ctrl+N": "Novo registro",
+    "Ctrl+Shift+S": "Sincronizar agora",
+    "Ctrl+Shift+K": "Conflitos de sincronização",
     "Ctrl+F": "Buscar no cofre",
     "Ctrl+G": "Gerar nova senha",
     "Ctrl+L": "Bloquear o cofre agora",
@@ -76,6 +102,12 @@ class IronKeyApp(ctk.CTk):
         # --- serviços -----------------------------------------------------
         self.crypto_manager = CryptoManager(config_file=get_config_path())
         self.database = PasswordDatabase(db_name=get_database_path())
+        self.database.set_device_id(self.settings.device_id)
+        self.sync_engine = sync_service.SyncEngine(
+            self.database, self.crypto_manager, self.settings, APP_VERSION
+        )
+        self._sync_lock = threading.Lock()
+        self._sync_job: Optional[str] = None
         self.password_generator = PasswordGenerator()
         self.pwned_checker = PwnedChecker()
         self.auditor = VaultAuditor(self.password_generator)
@@ -115,6 +147,8 @@ class IronKeyApp(ctk.CTk):
             "<Control-g>": lambda _e: self._if_unlocked(self._focus_generator),
             "<Control-l>": lambda _e: self._if_unlocked(self.lock_vault),
             "<Control-e>": lambda _e: self._if_unlocked(self.export_backup),
+            "<Control-Shift-S>": lambda _e: self._if_unlocked(self.sync_now),
+            "<Control-Shift-K>": lambda _e: self._if_unlocked(self.show_conflicts),
             "<Control-comma>": lambda _e: self._if_unlocked(self.open_settings),
             "<F1>": lambda _e: self.open_help(),
             "<F5>": lambda _e: self._if_unlocked(self.refresh),
@@ -210,6 +244,12 @@ class IronKeyApp(ctk.CTk):
         self._last_activity = time.time()
         self._lock_warned = False
         self._schedule_lock_check()
+        self._schedule_sync_check()
+
+        if self.settings.sync_configured() and self.settings.sync_on_unlock:
+            # Sincroniza já na abertura: o usuário vê o cofre atualizado sem
+            # precisar lembrar de apertar nada.
+            self.sync_now(reason="destravar", quiet=True)
 
     def _run_migrations(self, master_password: str) -> None:
         """Converte cofres do formato v1 (Fernet, campos em texto puro)."""
@@ -246,6 +286,11 @@ class IronKeyApp(ctk.CTk):
     def lock_vault(self, reason: str = "") -> None:
         if not self.crypto_manager.is_unlocked():
             return
+        # Última chance de publicar as alterações: depois do bloqueio a DEK é
+        # zerada e a sincronização fica impossível.
+        if self.settings.sync_configured() and self.settings.sync_on_lock:
+            self._sync_blocking("bloquear")
+        self._cancel_sync_check()
         self._cancel_lock_check()
         self.clipboard.clear(force=False)
         self.toasts.clear()
@@ -554,7 +599,8 @@ class IronKeyApp(ctk.CTk):
         if not passphrase:
             return
 
-        # Valida ANTES de tocar no cofre
+        # Valida ANTES de tocar no cofre — a versão anterior sobrescrevia o
+        # banco primeiro e só depois descobria que o arquivo era inválido.
         try:
             entries, meta = backup_service.read_encrypted_backup(path, passphrase)
         except backup_service.BackupError as exc:
@@ -651,6 +697,247 @@ class IronKeyApp(ctk.CTk):
                    "assim que terminar a migração.", "warning", 9000)
 
     # ==================================================================
+    # Sincronização entre dispositivos
+    # ==================================================================
+    def _cancel_sync_check(self) -> None:
+        if self._sync_job:
+            try:
+                self.after_cancel(self._sync_job)
+            except Exception:
+                pass
+            self._sync_job = None
+
+    def _schedule_sync_check(self) -> None:
+        """
+        Verificação periódica enquanto o cofre está destravado.
+
+        O intervalo é preferência do usuário (0 = desligado). O arquivo fica numa
+        pasta de nuvem, então isto é I/O de rede: um único tick por vez, nunca
+        dois em paralelo, e nada aqui bloqueia a interface.
+        """
+        self._cancel_sync_check()
+        interval = int(self.settings.sync_interval_seconds or 0)
+        if interval <= 0 or not self.settings.sync_configured():
+            return
+        self._sync_job = self.after(interval * 1000, self._sync_tick)
+
+    def _sync_tick(self) -> None:
+        self._sync_job = None
+        if not self.crypto_manager.is_unlocked():
+            return
+        if self.settings.sync_configured():
+            self.sync_now(reason="verificação periódica", quiet=True)
+        self._schedule_sync_check()
+
+    def sync_now(self, reason: str = "manual", quiet: bool = False) -> None:
+        """Dispara uma sincronização em segundo plano (nunca bloqueia a interface)."""
+        if not self.settings.sync_configured():
+            if not quiet:
+                self.toast(
+                    "Sincronização não está configurada. Ative em Configurações → "
+                    "Sincronização e escolha a pasta.", "warning", 6000,
+                )
+            return
+        if not self.crypto_manager.is_unlocked():
+            return
+        if not self._sync_lock.acquire(blocking=False):
+            if not quiet:
+                self.toast("Uma sincronização já está em andamento.", "info")
+            return
+
+        engine = self.sync_engine
+
+        def worker() -> None:
+            try:
+                outcome = engine.synchronize(reason)
+            finally:
+                self._sync_lock.release()
+            try:
+                self.after(0, lambda: self._apply_sync_outcome(outcome, quiet))
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _sync_blocking(self, reason: str) -> Optional[sync_service.SyncOutcome]:
+        """Sincronização síncrona, usada quando o cofre está prestes a ser trancado ou em testes."""
+        if not self._sync_lock.acquire(timeout=5.0):
+            return None
+        try:
+            outcome = self.sync_engine.synchronize(reason)
+        except Exception:
+            return None
+        finally:
+            self._sync_lock.release()
+        self._apply_sync_outcome(outcome, quiet=True)
+        return outcome
+
+    def _apply_sync_outcome(self, outcome: sync_service.SyncOutcome, quiet: bool) -> None:
+        self._handle_sync_outcome(outcome, quiet)
+        if self.vault_view is not None:
+            self.vault_view.refresh_sync_status()
+        if outcome.changed_locally:
+            self.refresh()
+
+    def _handle_sync_outcome(self, outcome: sync_service.SyncOutcome,
+                             quiet: bool = False) -> None:
+        pending = 0
+        try:
+            pending = self.database.count_pending_conflicts()
+        except Exception:
+            pass
+
+        if outcome.status == "error":
+            self.toast(f"Sincronização: {outcome.message}", "error", 9000)
+            return
+        if outcome.status == "disabled":
+            return
+
+        for warning in outcome.warnings:
+            self.toast(warning, "warning", 9000)
+
+        if outcome.conflicts or outcome.resurrections:
+            self.toast(
+                outcome.summary() + " Revise os conflitos para decidir o que manter.",
+                "warning", 12000,
+                action_label="Ver conflitos", action=self.show_conflicts,
+            )
+        elif not quiet or outcome.changed_locally:
+            self.toast(outcome.summary(), "success" if outcome.changed_locally else "info")
+        elif pending:
+            self.toast(f"{pending} conflito(s) de sincronização aguardando revisão.",
+                       "warning", 7000, action_label="Ver", action=self.show_conflicts)
+
+    def show_conflicts(self) -> None:
+        conflicts = self.database.list_conflicts(only_pending=True)
+        dialog = ConflictsDialog(self, conflicts, self._open_entry_by_uid)
+        dialog.show()
+        if dialog.resolved:
+            self.database.resolve_conflicts()
+            if self.vault_view is not None:
+                self.vault_view.refresh_sync_status()
+            self.toast("Conflitos marcados como revisados.", "success")
+
+    def _open_entry_by_uid(self, uid: str) -> None:
+        if self.database.get_entry(uid) is None:
+            self.toast("Este registro não existe mais neste cofre.", "warning", 6000)
+            return
+        self.edit_entry_by_uid(uid)
+
+    # ------------------------------------------------------------------
+    # Entrada de dispositivo (mesmo cofre em outra máquina)
+    # ------------------------------------------------------------------
+    def export_enrollment(self) -> None:
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Salvar arquivo de entrada do dispositivo",
+            defaultextension=enrollment_service.ENROLL_EXTENSION,
+            initialfile="ironkeypy-entrada.ikenr",
+            filetypes=[("Entrada de dispositivo IronKey Py", "*.ikenr"),
+                       ("Todos os arquivos", "*.*")],
+        )
+        if not path:
+            return
+        password = TextPromptDialog(
+            self, "Senha mestre",
+            "Confirme sua senha mestre. Ela protege o arquivo de entrada — quem tiver o "
+            "arquivo e a senha passa a ter acesso ao cofre.",
+            secret=True,
+        ).show()
+        if not password:
+            return
+        try:
+            enrollment_service.export_enrollment(
+                self.crypto_manager, password, path, self.settings.device_name
+            )
+        except enrollment_service.EnrollmentError as exc:
+            self._error("Não foi possível exportar a entrada", str(exc))
+            return
+        self.toast(
+            "Arquivo de entrada criado. Transfira-o para o outro dispositivo e apague-o "
+            "depois de usar — ele não deve ficar na pasta de sincronização.",
+            "warning", 14000, action_label="Abrir pasta", action=self._open_data_folder,
+        )
+
+    def import_enrollment(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self, title="Selecionar arquivo de entrada",
+            filetypes=[("Entrada de dispositivo IronKey Py", "*.ikenr"),
+                       ("Todos os arquivos", "*.*")],
+        )
+        if not path:
+            return
+        password = TextPromptDialog(
+            self, "Senha mestre do cofre",
+            "Informe a senha mestre do cofre que você quer usar neste dispositivo.",
+            secret=True,
+        ).show()
+        if not password:
+            return
+        try:
+            data = enrollment_service.read_enrollment(path, password)
+        except enrollment_service.EnrollmentError as exc:
+            self._error("Arquivo de entrada inválido", str(exc))
+            return
+
+        summary = enrollment_service.describe_header(data["header"])
+        confirmed = ConfirmDialog(
+            self, "Substituir o cofre deste dispositivo?",
+            "Este dispositivo passará a usar o cofre de origem:\n\n"
+            f"{summary}\n"
+            f"Criado em: {data.get('created_at') or 'desconhecido'}\n"
+            f"Origem: {data.get('source_device') or 'não informado'}\n\n"
+            "Os registros guardados aqui serão removidos (uma cópia de segurança do "
+            "arquivo atual do cofre é mantida ao lado dele). Se a pasta de sincronização "
+            "estiver configurada, o conteúdo do cofre compartilhado será baixado na "
+            "próxima sincronização.",
+            confirm_word="SUBSTITUIR", confirm_text="Substituir este cofre",
+        ).show()
+        if not confirmed:
+            return
+
+        try:
+            info = enrollment_service.import_enrollment(
+                path, password, get_config_path(), db_path=get_database_path(),
+                replace_existing=True,
+            )
+        except enrollment_service.EnrollmentError as exc:
+            self._error("Não foi possível importar a entrada", str(exc))
+            return
+
+        self._reload_vault_objects()
+        self.show_lock_screen(
+            "Cofre importado. Digite a senha mestre para abrir e sincronizar."
+        )
+        message = "Cofre deste dispositivo substituído pelo cofre de origem."
+        if info.get("preserved_db"):
+            message += f" Cópia do cofre anterior: {os.path.basename(info['preserved_db'])}"
+        self.toast(message, "success", 12000)
+
+    def _reload_vault_objects(self) -> None:
+        """Recria cofre/banco/engine depois de trocar o cabeçalho do cofre."""
+        try:
+            self.crypto_manager.lock()
+        except Exception:
+            pass
+        self.crypto_manager = CryptoManager(config_file=get_config_path())
+        self.database = PasswordDatabase(db_name=get_database_path())
+        self.database.set_device_id(self.settings.device_id)
+        self.sync_engine = sync_service.SyncEngine(
+            self.database, self.crypto_manager, self.settings, APP_VERSION
+        )
+        self._master_password_cache = None
+        self.throttle.register_success()
+        self.throttle = LoginThrottle(self.settings.max_unlock_attempts)
+        if self.vault_view is not None:
+            self.vault_view.destroy()
+            self.vault_view = None
+
+    def _pick_sync_dir(self) -> Optional[str]:
+        return filedialog.askdirectory(
+            parent=self, title="Escolha a pasta que já é sincronizada com a nuvem"
+        ) or None
+
+    # ==================================================================
     # Configurações e senha mestre
     # ==================================================================
     def save_settings(self) -> None:
@@ -660,20 +947,51 @@ class IronKeyApp(ctk.CTk):
             self.toast(f"Não foi possível salvar as preferências: {exc}", "error")
 
     def open_settings(self) -> None:
+        was_enabled = bool(self.settings.sync_enabled and self.settings.sync_dir)
         dialog = SettingsDialog(
             self, self.settings, self.crypto_manager.kdf_description(),
             str(get_app_data_dir()), lambda: self._open_data_folder(),
+            sync_status=self.sync_engine.status(),
+            on_pick_sync_dir=self._pick_sync_dir,
         )
         result = dialog.show()
+        action = getattr(dialog, "action", None)
         # O tema pode ter sido alterado ao vivo mesmo sem salvar; realinha.
         ctk.set_appearance_mode(self.settings.appearance_mode)
-        if result is None:
+        if result is None and action is None:
             return
         ctk.set_widget_scaling(self.settings.ui_scaling)
         self.throttle.max_attempts = self.settings.max_unlock_attempts
+        self._apply_sync_settings()
         self.save_settings()
         self.toast("Preferências salvas.", "success")
         self.refresh()
+
+        # Ativar a sincronização pela primeira vez deve produzir resultado visível
+        # na hora — esperar o primeiro tique do relógio pareceria que não funcionou.
+        if not was_enabled and self.settings.sync_configured():
+            self.sync_now(reason="ativada agora", quiet=True)
+
+        if action == "sync_now":
+            self.sync_now()
+        elif action == "conflicts":
+            self.show_conflicts()
+        elif action == "export_enrollment":
+            self.export_enrollment()
+        elif action == "import_enrollment":
+            self.import_enrollment()
+
+    def _apply_sync_settings(self) -> None:
+        """Valida a pasta escolhida e reajusta o relógio da sincronização."""
+        if self.settings.sync_enabled and not self.settings.sync_dir:
+            self.settings.sync_enabled = False
+            self.toast("Sincronização desativada: nenhuma pasta foi escolhida.", "warning", 7000)
+        elif self.settings.sync_enabled:
+            ok, problem = self.sync_engine.validate_directory(self.settings.sync_dir)
+            if not ok:
+                self.settings.sync_enabled = False
+                self.toast(f"Sincronização desativada: {problem}", "warning", 9000)
+        self._schedule_sync_check()
 
     def _open_data_folder(self) -> None:
         if not open_in_file_manager(get_app_data_dir()):
@@ -708,6 +1026,10 @@ class IronKeyApp(ctk.CTk):
     # Encerramento
     # ==================================================================
     def on_closing(self) -> None:
+        if (self.crypto_manager.is_unlocked() and self.settings.sync_configured()
+                and self.settings.sync_on_lock):
+            self._sync_blocking("sair")
+        self._cancel_sync_check()
         if self.settings.clear_clipboard_on_exit and self.clipboard.has_pending_secret:
             self.clipboard.clear(force=False)
         try:
@@ -720,6 +1042,23 @@ class IronKeyApp(ctk.CTk):
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="IronKey Py - Gerenciador de Senhas")
+    parser.add_argument(
+        "--data-dir", "-d",
+        help="Diretório customizado de dados e configurações (ex: para testar múltiplas instâncias)",
+    )
+    parser.add_argument(
+        "--profile", "-p",
+        help="Perfil isolado de dados (ex: 'instancia2' -> pasta IronKeyPy-instancia2)",
+    )
+    args, _ = parser.parse_known_args()
+    if args.data_dir:
+        os.environ["IRONKEYPY_DATA_DIR"] = os.path.abspath(args.data_dir)
+    elif args.profile:
+        from services.app_paths import _base_data_dir
+        os.environ["IRONKEYPY_DATA_DIR"] = str(_base_data_dir() / f"IronKeyPy-{args.profile}")
+
     settings = Settings.load()
     ctk.set_appearance_mode(settings.appearance_mode)
     ctk.set_default_color_theme(settings.color_theme)

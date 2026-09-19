@@ -1,7 +1,7 @@
 # 🔐 IronKey Py — Gerenciador de Senhas Seguro
 
 Gerenciador de senhas desktop, offline e de código aberto, escrito em Python.
-Seus dados ficam **na sua máquina**, cifrados com **AES-256-GCM** sob uma chave
+Seus dados ficam **no seu dispositivo**, cifrados com **AES-256-GCM** sob uma chave
 derivada por **Argon2id** — nada é enviado para nenhum servidor.
 
 <div align="center">
@@ -49,6 +49,18 @@ derivada por **Argon2id** — nada é enviado para nenhum servidor.
 - Exclusão de caracteres ambíguos (`0/O`, `1/l/I`), modo "só símbolos seguros para URL" e lista de exclusão própria
 - Medidor de **entropia real em bits** com tempo estimado de quebra
 
+### 🔄 Sincronização entre dispositivos *(novo na 2.1)*
+- **Mesmo cofre no desktop e no celular** usando uma pasta que você já sincroniza
+  (Google Drive, OneDrive, Dropbox, Syncthing).
+- **Mesclagem registro por registro**, não cópia de arquivo: editar nos dois lados não apaga nada
+- Exclusões se propagam; em edição simultânea do mesmo registro, **as duas versões sobrevivem**
+  e o conflito aparece para revisão
+- Sincroniza ao destravar, ao sair e a cada intervalo configurável, sempre em segundo plano
+- **Zero conhecimento**: o provedor de nuvem recebe apenas ciphertext (AES-256-GCM) e metadados
+  de tamanho/horário — nunca senha mestre, KEK, DEK ou qualquer campo do cofre
+- Arquivo de **entrada de dispositivo** (`.ikenr`) para colocar um segundo dispositivo no mesmo
+  cofre, protegido pela senha mestre
+
 ### 💾 Backup e migração
 - **`.ikbak`**: backup portátil, autocontido e cifrado com senha própria — restaura em qualquer máquina
 - **Importação de CSV** do Bitwarden, LastPass, Chrome e KeePass
@@ -69,7 +81,7 @@ derivada por **Argon2id** — nada é enviado para nenhum servidor.
 git clone https://github.com/wilsondesouza/IronKeyPy.git
 cd IronKeyPy
 
-python -m venv venv
+python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
@@ -79,32 +91,6 @@ python main.py
 Requisitos: **Python 3.10+**. Em Linux, o Tk precisa estar presente
 (`sudo apt install python3-tk`).
 
-### Testes
-
-```bash
-python -m unittest discover -s tests -t .
-```
-
----
-
-## Criação do Executável
-**Preparativos**
- - Tenha certeza de que as imagens (.ico e .png) estão com os caminhos absolutos no código principal `main.py`
-
-1. Instale o pyinstaller
-```bash
-pip install pyinstaller
-```
-
-2. Copie o comando abaixo, alterando apenas o nome da aplicação e da imagem do ícone
-```bash
-pyinstaller --noconfirm --onefile --name "Sua aplicação" --windowed --add-data ".venv/Lib/site-packages/customtkinter;customtkinter/" --icon="assets/images/seuicone.ico" "main.py"
-```
-
-3. Confira o resultado
-Será criado um arquivo `.spec` e as pastas `build` e `dist`. Seu aplicativo standalone e portable estará na pasta `dist`.
-
----
 
 ## ⌨️ Atalhos
 
@@ -115,6 +101,7 @@ Será criado um arquivo `.spec` e as pastas `build` e `dist`. Seu aplicativo sta
 | `Ctrl+G` | Ir para o gerador | `Ctrl+H` | Mostrar/ocultar campo em foco |
 | `Ctrl+L` | Bloquear o cofre | `F1` | Ajuda |
 | `F5` | Recarregar a lista | `Esc` | Fechar diálogo / limpar busca |
+| `Ctrl+Shift+S` | Sincronizar agora | `Ctrl+Shift+K` | Conflitos de sincronização |
 
 ---
 
@@ -130,8 +117,9 @@ Arquivos: `config.json` (cabeçalho do cofre: salt, parâmetros de KDF e a chave
 de dados embrulhada), `ironkeypy.db` (registros cifrados), `settings.json`
 (preferências) e `state.json` (controle de tentativas).
 
-Defina `IRONKEYPY_DATA_DIR` para usar outra pasta — útil para versão portátil
-em pendrive.
+Na **pasta de sincronização** ficam apenas `ironkeypy-sync.ikbak` (conteúdo cifrado) e `ironkeypy-sync.manifest.json`
+(gatilho com hash e geração, em texto claro mas autenticado por HMAC — revela
+tamanho, horário e um identificador do cofre, nunca conteúdo).
 
 ---
 
@@ -144,7 +132,8 @@ IronKeyPy/
 ├── services/               # criptografia, gerador, TOTP, backup, auditoria…
 ├── database/               # persistência cifrada em SQLite
 ├── api/                    # consulta ao Have I Been Pwned
-├── tests/                  # 58 testes automatizados
+├── tests/                  # 102 testes automatizados
+├── docs/                   # planejamento multiplataforma e contrato de sincronização
 └── assets/
 ```
 
@@ -164,17 +153,8 @@ Resumo do essencial:
   o sistema atualizado e o disco cifrado.
 - Exporte um `.ikbak` periodicamente e guarde-o fora da máquina.
 
----
-
-## 📦 Dependências
-
-```bash
-customtkinter==5.2.2
-pyperclip==1.9.0
-cryptography>=44.0.0
-requests>=2.32.4
-Pillow>=10.4.0
-```
+O histórico completo de correções de segurança, bugs e melhorias de usabilidade
+está em **[RELATORIO-DE-MELHORIAS.md](RELATORIO-DE-MELHORIAS.md)**.
 
 ---
 

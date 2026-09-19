@@ -1,3 +1,11 @@
+"""
+Utilitários de manuseio de segredos em memória.
+
+Python não permite controle total sobre a memória (strings são imutáveis e o GC
+pode copiá-las), mas podemos reduzir a janela de exposição usando ``bytearray``
+mutável e zerando o conteúdo assim que ele deixa de ser necessário.
+"""
+
 from __future__ import annotations
 
 import hmac

@@ -1,3 +1,22 @@
+"""
+Geração e avaliação de senhas.
+
+Melhorias em relação à versão anterior
+--------------------------------------
+* **Força medida por entropia real** (bits) em vez de uma pontuação arbitrária
+  que dava "Muito Forte" para ``Aa1!Aa1!Aa1!``. O cálculo combina entropia do
+  conjunto de caracteres com penalidades por padrões (repetição, sequências,
+  palavras comuns, datas) — a nota agora reflete resistência a ataque real.
+* **Frases-senha (Diceware)**: mais fáceis de digitar/memorizar e com entropia
+  auditável — essenciais para a *senha mestre*, que precisa ser lembrada.
+* **Exclusão de caracteres ambíguos** (0/O/l/1/I) e opção "sem símbolos
+  problemáticos" para sites que restringem pontuação.
+* **Distribuição uniforme garantida**: a versão anterior colocava os caracteres
+  obrigatórios no início da lista antes de embaralhar; o embaralhamento era
+  correto, mas o corte ``required_chars[:length]`` para senhas curtas
+  descartava classes de forma enviesada. Agora usamos rejeição por reamostragem.
+"""
+
 from __future__ import annotations
 
 import math

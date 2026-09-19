@@ -16,6 +16,20 @@ que derivava a chave Fernet diretamente da senha mestre:
    cofre, impedindo que um atacante troque o salt/parâmetros de KDF ou mova
    ciphertexts entre registros (ataque de "cut-and-paste").
 3. **Rotação de parâmetros de KDF** sem reprocessar o cofre.
+
+Correções de vulnerabilidade em relação à versão anterior
+---------------------------------------------------------
+* ``verify_master_password`` retornava ``True`` quando a chave ``test_data``
+  não existia no ``config.json`` — bastava editar o arquivo (texto puro, sem
+  integridade) para entrar no cofre. Agora a verificação **falha fechada**.
+* PBKDF2 com 100.000 iterações estava abaixo da recomendação atual do OWASP
+  (600.000 para HMAC-SHA256). O padrão passou a ser Argon2id; PBKDF2-SHA256
+  com 600k iterações é o fallback.
+* Fernet usa AES-128-CBC + HMAC-SHA256; migramos para AES-256-GCM (AEAD),
+  mantendo leitura de cofres legados para migração automática.
+* Escrita do cabeçalho agora é atômica (tmp + ``os.replace``) e com permissão
+  0600, evitando cofre corrompido por queda de energia e leitura por outros
+  usuários da máquina.
 """
 
 from __future__ import annotations
@@ -31,6 +45,7 @@ from typing import Any, Dict, Optional
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from services.app_paths import harden_path
@@ -402,15 +417,49 @@ class CryptoManager:
                 return legacy
             raise CryptoError("Não foi possível decifrar o registro.")
 
-    def derive_subkey(self, purpose: bytes, length: int = KEY_SIZE) -> bytes:
-        """Deriva uma subchave da DEK via HKDF (usada por backups portáteis)."""
+    def export_header(self) -> Dict[str, Any]:
+        """
+        Cópia do cabeçalho do cofre (KDF, ``vault_id``, DEK embrulhada, verifier).
+
+        É o que a entrada de dispositivo (``services/enrollment.py``) transfere:
+        dois dispositivos com o **mesmo** cabeçalho compartilham a DEK e, com ela,
+        a chave de sincronização. A DEK não é exposta em claro — continua
+        embrulhada pela KEK derivada da senha mestre.
+        """
+        return json.loads(json.dumps(self._header))
+
+    def vault_id_bytes(self) -> bytes:
+        """``vault_id`` decodificado, usado como salt das subchaves do cofre."""
+        raw = self._header.get("vault_id")
+        if not raw:
+            raise CryptoError("Cabeçalho do cofre não possui identificador.")
+        try:
+            return _b64d(raw)
+        except Exception as exc:  # pragma: no cover - cabeçalho adulterado
+            raise CryptoError("Identificador do cofre inválido.") from exc
+
+    def derive_subkey(self, purpose: bytes, length: int = KEY_SIZE) -> SecretBytes:
+        """
+        Deriva uma subchave da DEK via HKDF (usada por backups e pela sincronização).
+
+        ``vault_id`` entra como salt e ``purpose`` como ``info``: cada finalidade
+        recebe uma chave distinta, e uma subchave só vale para **este** cofre.
+
+        Consequências: nada novo para armazenar ou para o usuário digitar; trocar
+        a senha mestre não muda as subchaves (a DEK não muda); **rotacionar a DEK
+        invalida todas elas**, então quem depende de uma (a sincronização) precisa
+        tratar isso explicitamente.
+        """
         if self._dek is None:
             raise VaultLockedError("O cofre está trancado.")
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
-        return HKDF(
-            algorithm=hashes.SHA256(), length=length, salt=None, info=purpose
-        ).derive(self._dek.bytes())
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=length,
+            salt=self.vault_id_bytes(),
+            info=bytes(purpose),
+        )
+        with SecretBytes(self._dek.bytes()) as material:
+            return SecretBytes(hkdf.derive(material.bytes()))
 
     # ------------------------------------------------------------------
     # Suporte a cofres legados (v1: Fernet + PBKDF2 100k)

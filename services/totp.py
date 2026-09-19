@@ -1,9 +1,9 @@
 """
-Códigos TOTP (RFC 6238 / RFC 4226).
+Códigos TOTP (RFC 6238 / RFC 4226) usando apenas a biblioteca padrão.
 
 Um cofre moderno precisa guardar o *segundo fator* junto da credencial —
 sem isso o usuário acaba deixando os códigos 2FA em um app sem backup ou,
-pior, desabilitando o 2FA.
+pior, desabilitando o 2FA. Implementado sem dependências novas.
 """
 
 from __future__ import annotations

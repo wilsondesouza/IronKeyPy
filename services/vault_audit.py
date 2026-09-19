@@ -1,3 +1,13 @@
+"""
+Auditoria de saúde do cofre.
+
+Funcionalidade ausente na versão anterior e considerada básica em qualquer
+gerenciador de senhas: o usuário não tinha como descobrir, sem abrir registro
+por registro, quais credenciais estão **reutilizadas**, **fracas**, **vazadas**
+ou **antigas** — exatamente os quatro fatores que causam comprometimento de
+conta na prática.
+"""
+
 from __future__ import annotations
 
 import hashlib

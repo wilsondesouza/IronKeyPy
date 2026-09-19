@@ -1,3 +1,20 @@
+"""
+Backup portátil e importação/exportação.
+
+Bug crítico corrigido
+---------------------
+A versão anterior "exportava backup" copiando apenas o ``ironkeypy.db``. Como o
+salt de derivação da chave vive no ``config.json`` (não copiado), **o backup era
+irrecuperável em outra máquina ou após uma reinstalação** — o usuário só
+descobriria isso no pior momento possível. Pior: a importação sobrescrevia o
+banco atual *antes* de verificar se o arquivo podia sequer ser decifrado.
+
+O novo formato ``.ikbak`` é autocontido: carrega o próprio salt, os parâmetros
+de KDF e os dados cifrados com AES-256-GCM, protegidos por uma senha escolhida
+na hora da exportação (por padrão, a própria senha mestre). Também é verificado
+integralmente **antes** de tocar no cofre atual.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -33,6 +50,9 @@ def export_encrypted_backup(entries: List[VaultEntry], passphrase: str, path: st
     """Grava um arquivo autocontido e cifrado. Retorna o nº de registros."""
     if not passphrase:
         raise BackupError("Informe uma senha para proteger o backup.")
+    # Backup é instantâneo de conteúdo: tombstones (registros já excluídos,
+    # reduzidos a metadados) não pertencem a ele.
+    entries = [e for e in entries if not e.is_deleted]
 
     payload = {
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -113,20 +133,40 @@ def read_encrypted_backup(path: str, passphrase: str) -> Tuple[List[VaultEntry],
 
 def merge_entries(existing: List[VaultEntry], incoming: List[VaultEntry]) -> Tuple[List[VaultEntry], int]:
     """
-    Mescla sem duplicar: chave (título, usuário) em minúsculas.
+    Importa registros novos sem duplicar.
 
-    Retorna ``(novos_registros, quantidade_ignorada)``.
+    Critério de identidade, em ordem: ``uid`` quando o registro tem um (backup
+    do IronKey Py) e, só na ausência dele (importação de CSV), o par
+    ``(título, usuário)`` em minúsculas.
+
+    Correção relevante para a sincronização: a versão anterior **descartava o
+    uid** e gerava um novo a cada importação. Isso destruía a identidade do
+    registro — e sem identidade estável não existe mesclagem entre dispositivos,
+    só duplicação.
     """
-    index = {(e.title.strip().lower(), e.username.strip().lower()) for e in existing}
+    by_uid = {e.uid for e in existing if e.uid}
+    by_pair = {(e.title.strip().lower(), e.username.strip().lower()) for e in existing}
+
     new_entries, skipped = [], 0
     for entry in incoming:
-        key = (entry.title.strip().lower(), entry.username.strip().lower())
-        if key in index:
+        # Backup é um instantâneo de conteúdo: tombstones não fazem parte dele.
+        if entry.is_deleted:
             skipped += 1
             continue
-        index.add(key)
-        entry.uid = ""       # força uid novo, evitando colisão de chave única
+        if entry.uid and entry.uid in by_uid:
+            skipped += 1
+            continue
+        key = (entry.title.strip().lower(), entry.username.strip().lower())
+        if not entry.uid and key in by_pair:
+            skipped += 1
+            continue
+        if not entry.uid:
+            import uuid
+
+            entry.uid = uuid.uuid4().hex
         entry.row_id = None
+        by_uid.add(entry.uid)
+        by_pair.add(key)
         new_entries.append(entry)
     return new_entries, skipped
 
@@ -241,6 +281,12 @@ def _dict_to_entry(data: Dict[str, Any]) -> VaultEntry:
     allowed = set(VaultEntry.__annotations__) - {"row_id"}
     clean = {k: v for k, v in data.items() if k in allowed}
     clean["favorite"] = bool(clean.get("favorite", False))
+    try:
+        clean["rev"] = max(1, int(clean.get("rev") or 1))
+    except (TypeError, ValueError):
+        clean["rev"] = 1
+    clean["deleted_at"] = str(clean.get("deleted_at") or "")
+    clean["device_id"] = str(clean.get("device_id") or "")
     for key in ("title", "username", "password", "url", "notes", "category",
                 "totp_secret", "uid", "created_at", "updated_at", "password_changed_at"):
         clean[key] = str(clean.get(key) or "")

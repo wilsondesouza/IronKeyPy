@@ -1,3 +1,5 @@
+"""Paleta, tipografia e helpers visuais compartilhados pela interface."""
+
 from __future__ import annotations
 
 import sys
@@ -74,6 +76,14 @@ def font(size: int = 13, weight: str = "normal", mono: bool = False) -> ctk.CTkF
 
 # ---------------------------------------------------------------------------
 # Glifos com degradação elegante
+#
+# A versão anterior usava emojis coloridos direto no texto dos botões. Em
+# Windows/macOS funciona; em muitas distribuições Linux (e em contêineres/VMs
+# sem fonte de emoji instalada) cada emoji vira um retângulo vazio — a interface
+# ficava cheia de "tofu" e os botões, indistinguíveis entre si.
+#
+# Detectamos a presença de uma fonte de emoji uma única vez e, quando ela não
+# existe, trocamos para símbolos garantidos na DejaVu Sans (padrão do Linux).
 # ---------------------------------------------------------------------------
 EMOJI_FONT_FAMILIES = (
     "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
@@ -117,6 +127,11 @@ GLYPHS = {
     "magnifier":    ("🔍",   "✱"),
     "totp":         ("🔐",   "⚷"),
     "reuse":        ("🔁",   "⇄"),
+    # Sincronização entre dispositivos
+    "sync":         ("🔄",   "↻"),
+    "cloud":        ("☁",    "☁"),
+    "device":       ("📱",   "▤"),
+    "conflict":     ("⚖",    "⚖"),
 }
 
 _emoji_supported: bool | None = None
@@ -203,6 +218,10 @@ def apply_icon(window) -> None:
 def center_on_parent(window, parent, width: int, height: int) -> None:
     """
     Centraliza relativa à janela-mãe e mantém o resultado dentro da tela.
+
+    A versão anterior centralizava sempre no *centro da tela* e usava tamanhos
+    fixos (1200x800), o que jogava parte da janela para fora em notebooks de
+    1366x768 e em monitores secundários.
     """
     window.update_idletasks()
     screen_w = window.winfo_screenwidth()

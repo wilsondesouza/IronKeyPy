@@ -1,3 +1,11 @@
+"""
+Lista de palavras (pt-BR) para geração de frases-senha no estilo Diceware.
+
+Critérios: palavras comuns, sem acentos e sem cedilha (evita problemas de
+teclado/codificação em formulários), 3 a 8 letras, sem pares ambíguos.
+A entropia real é calculada a partir de ``len(WORDLIST)`` — nunca assumida.
+"""
+
 WORDLIST = sorted(set("""
 abacaxi abelha abismo abraco acampar acender acerto acordo acucar adega adorar
 adulto afeto agenda agilidade agora agua aguia ajuda alameda alarme alavanca

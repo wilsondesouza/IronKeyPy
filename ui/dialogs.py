@@ -1,3 +1,14 @@
+"""
+Diálogos de criação/edição de registro, configurações e troca de senha mestre.
+
+Funcionalidades que simplesmente não existiam na versão anterior:
+  * **editar** um registro salvo (só dava para criar e apagar);
+  * campos de **URL, categoria, notas e TOTP**;
+  * **histórico de senhas**;
+  * **troca da senha mestre**;
+  * **tela de configurações** (auto-bloqueio, área de transferência, tema).
+"""
+
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
@@ -264,7 +275,7 @@ class PasswordHistoryDialog(ModalDialog):
 
 class ChangeMasterPasswordDialog(ModalDialog):
     """
-    Troca da senha mestre.
+    Troca da senha mestre — inexistente na versão anterior.
 
     Graças ao envelope KEK/DEK a operação apenas reembrulha a chave de dados:
     o banco não precisa ser reescrito, então não há janela em que os registros
@@ -361,8 +372,10 @@ class SettingsDialog(ModalDialog):
     """Preferências de segurança e aparência (antes, constantes no código)."""
 
     def __init__(self, parent, settings: Settings, kdf_description: str,
-                 data_dir: str, on_open_folder: Callable[[], None]):
-        super().__init__(parent, "Configurações", width=640, height=680, resizable=True)
+                 data_dir: str, on_open_folder: Callable[[], None],
+                 sync_status: Optional[Dict[str, object]] = None,
+                 on_pick_sync_dir: Optional[Callable[[], Optional[str]]] = None):
+        super().__init__(parent, "Configurações", width=680, height=720, resizable=True)
         self.settings = settings
         self.add_title("Configurações", "As alterações são aplicadas imediatamente.")
 
@@ -377,8 +390,11 @@ class SettingsDialog(ModalDialog):
             return frame
 
         security = scrollable("Segurança")
+        sync_tab = scrollable("Sincronização")
         appearance = scrollable("Aparência")
         about = scrollable("Sobre o cofre")
+
+        self._build_sync_tab(sync_tab, settings, sync_status or {}, on_pick_sync_dir)
 
         # --- Segurança ---------------------------------------------------
         self.autolock_var = ctk.IntVar(value=settings.auto_lock_seconds)
@@ -479,6 +495,177 @@ class SettingsDialog(ModalDialog):
         self.finish_setup()
 
     # ------------------------------------------------------------------
+    # Aba: Sincronização
+    # ------------------------------------------------------------------
+    def _build_sync_tab(self, parent, settings: Settings, status: Dict[str, object],
+                        on_pick_sync_dir) -> None:
+        """
+        Sincronização pelo "meio-termo": uma pasta que já é sincronizada pelo
+        serviço de nuvem do próprio usuário. Nenhum servidor nosso é operado, e
+        nenhum conteúdo sai daqui sem cifra — por isso o texto é explícito sobre o
+        que o provedor de nuvem consegue ver.
+
+        Ordem dos blocos pensada para telas pequenas: **situação e ações primeiro**.
+        Antes, os botões "Sincronizar agora" e "Ver conflitos" ficavam abaixo da
+        dobra (a aba tem ~975 px de conteúdo numa área de ~517 px) e exigiam rolar
+        a tela para algo que o usuário faz o tempo todo.
+        """
+        self.action: Optional[str] = None
+        self.sync_dir_value = settings.sync_dir
+
+        ctk.CTkLabel(
+            parent,
+            text="Mantém o mesmo cofre no desktop e no celular, através de uma pasta que "
+                 "você já sincroniza (Google Drive, OneDrive, Dropbox, Syncthing…).",
+            font=font(11), text_color=color("text_muted"), anchor="w",
+            justify="left", wraplength=580,
+        ).pack(fill="x", padx=6, pady=(6, 10))
+
+        self.sync_enabled_var = ctk.BooleanVar(value=settings.sync_enabled)
+        self._switch(
+            parent, "Ativar sincronização", self.sync_enabled_var,
+            "Só o arquivo cifrado é gravado na pasta. O provedor de nuvem vê tamanho, "
+            "horário e um identificador do cofre — nunca senhas, títulos ou usuários.",
+        )
+
+        ctk.CTkLabel(parent, text="Pasta de sincronização", font=font(12, "bold"),
+                     anchor="w").pack(fill="x", pady=(16, 2), padx=6)
+        self.sync_dir_label = ctk.CTkLabel(
+            parent, text=self.sync_dir_value or "(nenhuma pasta escolhida)",
+            font=font(10, mono=True), text_color=color("text_muted"),
+            anchor="w", justify="left", wraplength=560,
+        )
+        self.sync_dir_label.pack(fill="x", padx=6)
+
+        dir_row = ctk.CTkFrame(parent, fg_color="transparent")
+        dir_row.pack(fill="x", padx=6, pady=(6, 0))
+        ctk.CTkButton(
+            dir_row, text=gt("folder", "Escolher pasta"), height=34,
+            fg_color=color("neutral"), hover_color=color("neutral_hover"),
+            command=lambda: self._pick_sync_dir(on_pick_sync_dir),
+        ).pack(side="left")
+
+        # --- situação atual + ações (o que o usuário mais precisa ver) ----
+        ctk.CTkLabel(parent, text="Situação", font=font(12, "bold"), anchor="w").pack(
+            fill="x", pady=(18, 4), padx=6
+        )
+        pending = int(status.get("pending_conflicts") or 0)
+        state_lines = [
+            f"Pasta configurada:      {'sim' if status.get('configured') else 'não'}",
+            f"Última sincronização:   {status.get('last_at') or 'nunca'}",
+            f"Versão do arquivo:      {status.get('last_generation') or 0}",
+            f"Este dispositivo:       {status.get('device_name') or '—'}",
+            f"Exclusões guardadas:    {status.get('tombstones') or 0}",
+            f"Conflitos para revisar: {pending}",
+        ]
+        ctk.CTkLabel(
+            parent, text="\n".join(state_lines), font=font(10, mono=True),
+            justify="left", anchor="w",
+        ).pack(fill="x", padx=8)
+
+        action_row = ctk.CTkFrame(parent, fg_color="transparent")
+        action_row.pack(fill="x", padx=6, pady=(8, 0))
+        ctk.CTkButton(
+            action_row, text=gt("sync", "Sincronizar agora"), height=34,
+            fg_color=color("primary"), hover_color=color("primary_hover"),
+            command=lambda: self._run_action("sync_now"),
+        ).pack(side="left")
+        conflicts_button = ctk.CTkButton(
+            action_row,
+            text=gt("conflict", f"Ver conflitos ({pending})" if pending else "Conflitos"),
+            height=34, fg_color=color("neutral"), hover_color=color("neutral_hover"),
+            command=lambda: self._run_action("conflicts"),
+        )
+        conflicts_button.pack(side="left", padx=(8, 0))
+        if pending:
+            conflicts_button.configure(fg_color=color("warning"), text_color="#101010")
+
+        # --- comportamento (ajuste fino) ---------------------------------
+        ctk.CTkLabel(parent, text="Quando sincronizar", font=font(12, "bold"),
+                     anchor="w").pack(fill="x", pady=(20, 0), padx=6)
+
+        self.sync_interval_var = ctk.IntVar(value=settings.sync_interval_seconds)
+        self._slider_row(
+            parent, "Verificar alterações a cada", self.sync_interval_var,
+            0, 600, 20, self._format_seconds,
+            "Enquanto o cofre está destravado. 0 = apenas ao destravar e ao sair.",
+        )
+
+        self.sync_unlock_var = ctk.BooleanVar(value=settings.sync_on_unlock)
+        self._switch(parent, "Sincronizar ao destravar o cofre", self.sync_unlock_var)
+
+        self.sync_lock_var = ctk.BooleanVar(value=settings.sync_on_lock)
+        self._switch(parent, "Sincronizar ao bloquear ou sair", self.sync_lock_var)
+
+        self.sync_retention_var = ctk.IntVar(value=settings.tombstone_max_age_days)
+        self._slider_row(
+            parent, "Manter marcas de exclusão por", self.sync_retention_var,
+            7, 365, 51, lambda v: f"{int(v)} dias",
+            "Exclusões precisam viajar até os outros dispositivos. Depois desse prazo o "
+            "registro é removido definitivamente. Um dispositivo que ficar mais tempo sem "
+            "sincronizar pode reintroduzir um registro excluído — você será avisado.",
+        )
+
+        ctk.CTkLabel(parent, text="Nome deste dispositivo", font=font(12, "bold"),
+                     anchor="w").pack(fill="x", pady=(16, 2), padx=6)
+        self.sync_label_var = ctk.StringVar(value=settings.device_label)
+        ctk.CTkEntry(
+            parent, textvariable=self.sync_label_var, height=34, font=font(12),
+            placeholder_text=settings.device_name,
+        ).pack(fill="x", padx=6)
+        ctk.CTkLabel(
+            parent, text="Aparece no aviso de conflito, para você saber de onde veio a outra "
+                         "versão do registro.",
+            font=font(10), text_color=color("text_muted"), anchor="w", justify="left",
+            wraplength=560,
+        ).pack(fill="x", padx=6, pady=(2, 0))
+
+        # --- entrar em um cofre existente --------------------------------
+        ctk.CTkLabel(parent, text="Usar este aplicativo em um segundo dispositivo",
+                     font=font(12, "bold"), anchor="w").pack(fill="x", pady=(22, 4), padx=6)
+        ctk.CTkLabel(
+            parent,
+            text="Um backup (.ikbak) restaura os dados, mas cria um cofre novo — não serve "
+                 "para sincronizar. Para dois dispositivos compartilharem o mesmo cofre, "
+                 "transfira o arquivo de entrada (.ikenr) uma única vez. Ele exige a senha "
+                 "mestre e não deve ficar guardado na pasta de sincronização.",
+            font=font(10), text_color=color("text_muted"), anchor="w", justify="left",
+            wraplength=560,
+        ).pack(fill="x", padx=6)
+
+        enroll_row = ctk.CTkFrame(parent, fg_color="transparent")
+        enroll_row.pack(fill="x", padx=6, pady=(8, 0))
+        ctk.CTkButton(
+            enroll_row, text=gt("export", "Exportar entrada"), height=34,
+            fg_color=color("neutral"), hover_color=color("neutral_hover"),
+            command=lambda: self._run_action("export_enrollment"),
+        ).pack(side="left")
+        ctk.CTkButton(
+            enroll_row, text=gt("import", "Importar entrada"), height=34,
+            fg_color=color("danger"), hover_color=color("danger_hover"),
+            command=lambda: self._run_action("import_enrollment"),
+        ).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(
+            parent, text="Importar substitui o cofre deste dispositivo (uma cópia de "
+                         "segurança do cofre atual é mantida).",
+            font=font(10), text_color=color("warning"), anchor="w", justify="left",
+            wraplength=560,
+        ).pack(fill="x", padx=6, pady=(4, 0))
+
+    def _run_action(self, name: str) -> None:
+        """Grava as preferências e fecha, sinalizando o que o app deve fazer depois."""
+        self.action = name
+        self._save()
+
+    def _pick_sync_dir(self, picker) -> None:
+        if picker is None:
+            return
+        chosen = picker()
+        if chosen:
+            self.sync_dir_value = chosen
+            self.sync_dir_label.configure(text=chosen)
+
+    # ------------------------------------------------------------------
     @staticmethod
     def _format_seconds(value: int) -> str:
         value = int(value)
@@ -526,7 +713,107 @@ class SettingsDialog(ModalDialog):
         self.settings.appearance_mode = self.appearance_var.get()
         self.settings.ui_scaling = float(self.scaling_var.get())
         self.settings.sort_order = self.sort_var.get()
+
+        self.settings.sync_enabled = bool(self.sync_enabled_var.get())
+        self.settings.sync_dir = getattr(self, "sync_dir_value", self.settings.sync_dir)
+        self.settings.sync_interval_seconds = int(self.sync_interval_var.get())
+        self.settings.sync_on_unlock = bool(self.sync_unlock_var.get())
+        self.settings.sync_on_lock = bool(self.sync_lock_var.get())
+        self.settings.tombstone_max_age_days = int(self.sync_retention_var.get())
+        self.settings.device_label = self.sync_label_var.get().strip()[:60]
+
         self.result = self.settings
+        self.close()
+
+
+class ConflictsDialog(ModalDialog):
+    """
+    Revisão dos conflitos de sincronização.
+
+    Decisão D2: quando o mesmo registro é editado nos dois dispositivos, as duas
+    versões sobrevivem — o perdedor vira um registro novo, com "conflito" no
+    título. Este diálogo existe para que o usuário **veja** isso e decida, em vez
+    de descobrir por acaso meses depois.
+    """
+
+    def __init__(self, parent, conflicts: List[Dict], on_open_entry: Callable[[str], None]):
+        super().__init__(parent, "Conflitos de sincronização", width=720, height=560,
+                         resizable=True)
+        self.add_title(
+            "Conflitos de sincronização",
+            "Estes registros foram editados em dois dispositivos antes de se falarem. "
+            "Nenhuma versão foi descartada: a mais recente manteve o registro original e "
+            "a outra foi preservada separadamente.",
+        )
+        self.on_open_entry = on_open_entry
+        self.resolved = False
+
+        if not conflicts:
+            ctk.CTkLabel(
+                self.body, text=f'{g("ok")}  Nenhum conflito pendente.',
+                font=font(13), text_color=color("success"),
+            ).pack(pady=40)
+        else:
+            listing = ctk.CTkScrollableFrame(self.body, fg_color="transparent")
+            listing.pack(fill="both", expand=True)
+            for item in conflicts:
+                self._render_conflict(listing, item)
+
+        self.add_button_row(
+            "Marcar todos como revisados" if conflicts else "Fechar",
+            self._resolve_all if conflicts else self.close,
+            cancel_text="Fechar",
+        )
+        self.finish_setup()
+
+    def _render_conflict(self, parent, item: Dict) -> None:
+        detail = item.get("detail") or {}
+        card = ctk.CTkFrame(parent, fg_color=color("bg_card"), corner_radius=10)
+        card.pack(fill="x", pady=6, padx=4)
+
+        kind = detail.get("kind")
+        if kind == "resurrection":
+            headline = f'{g("warn")}  Registro reapareceu: {detail.get("title") or "—"}'
+            explanation = (
+                "Este registro foi excluído aqui há tempo suficiente para a marca de "
+                "exclusão expirar, e voltou de um dispositivo que ficou muito tempo sem "
+                "sincronizar. Confira se é para manter ou apagar de novo."
+            )
+        else:
+            headline = f'{g("conflict")}  {detail.get("kept_title") or "Registro"}'
+            explanation = (
+                f'Versão mantida: {detail.get("kept_title") or "—"} '
+                f'(revisão {detail.get("kept_rev")})\n'
+                f'Versão preservada à parte: {detail.get("lost_title") or "—"}'
+            )
+
+        header = ctk.CTkLabel(card, text=headline, font=font(12, "bold"), anchor="w",
+                              justify="left", wraplength=620)
+        header.pack(fill="x", padx=12, pady=(10, 2))
+        ctk.CTkLabel(
+            card, text=explanation, font=font(10), text_color=color("text_muted"),
+            anchor="w", justify="left", wraplength=620,
+        ).pack(fill="x", padx=12)
+        ctk.CTkLabel(
+            card,
+            text=f'Detectado em {item.get("detected_at", "—")} · '
+                 f'dispositivo de origem {str(item.get("device_id") or "—")[:8]}…',
+            font=font(9), text_color=color("text_muted"), anchor="w",
+        ).pack(fill="x", padx=12, pady=(2, 0))
+
+        target = detail.get("lost_uid") or item.get("entry_uid")
+        if kind != "resurrection" and target:
+            ctk.CTkButton(
+                card, text=gt("eye", "Abrir a versão preservada"), height=30,
+                fg_color=color("neutral"), hover_color=color("neutral_hover"),
+                command=lambda uid=target: self._open(uid),
+            ).pack(anchor="w", padx=12, pady=(8, 10))
+
+    def _open(self, uid: str) -> None:
+        self.on_open_entry(uid)
+
+    def _resolve_all(self) -> None:
+        self.resolved = True
         self.close()
 
 

@@ -1,3 +1,22 @@
+"""
+Tela principal do cofre: lista de registros, gerador e auditoria.
+
+Correções de bugs visuais/estruturais herdados da versão anterior
+------------------------------------------------------------------
+* ``clear_clipboard`` chamava ``create_widgets()``, **duplicando toda a
+  interface a cada 30 s** (ver ``services/clipboard.py``).
+* A "verificação de segurança" de uma senha salva criava um diálogo de
+  progresso e o destruía com ``after(100, close_dialog)`` — a barra piscava e
+  sumia antes da resposta da rede, sem nenhum indicador do que estava
+  acontecendo. Agora o estado de carregamento fica no próprio card.
+* Botões usavam ``fg_color="black"`` com ``hover_color="darkorange"``: no tema
+  escuro o botão sumia contra o fundo e o hover destoava do resto da paleta.
+* A lista era reconstruída inteira a cada tecla digitada na busca, sem
+  *debounce* — travava perceptivelmente com poucas dezenas de registros.
+* ``'•' * len(password)`` na listagem vazava o comprimento exato de cada senha.
+* Não havia estado vazio, contagem de itens, filtros nem ordenação.
+"""
+
 from __future__ import annotations
 
 import threading
@@ -72,6 +91,10 @@ class VaultView(ctk.CTkFrame):
             return button
 
         action(gt("plus", "Novo"), self.app.new_entry, "Criar registro (Ctrl+N)", "primary", 96)
+        self.sync_button = action(
+            g("sync"), lambda: self.app.sync_now(),
+            "Sincronizar agora (Ctrl+Shift+S)", "neutral",
+        )
         action(g("lock"), self.app.lock_vault, "Bloquear agora (Ctrl+L)", "danger")
         action(g("gear"), self.app.open_settings, "Configurações (Ctrl+,)")
         action(g("help"), self.app.open_help, "Ajuda e atalhos (F1)")
@@ -762,7 +785,44 @@ class VaultView(ctk.CTkFrame):
                                         text_color=color("text_muted"))
         self.status_lock.pack(side="right", padx=12)
 
+        # Estado da sincronização: fica visível o tempo todo porque "o cofre está
+        # atualizado?" é a pergunta que mais importa em uso com dois dispositivos.
+        self.status_sync = ctk.CTkLabel(bar, text="", font=font(10, "bold"),
+                                        text_color=color("text_muted"))
+        self.status_sync.pack(side="right", padx=12)
+
         self.update_status()
+        self.refresh_sync_status()
+
+    def refresh_sync_status(self) -> None:
+        if not hasattr(self, "status_sync"):
+            return
+        try:
+            status = self.app.sync_engine.status()
+        except Exception:
+            self.status_sync.configure(text="")
+            return
+
+        if not status.get("enabled"):
+            self.status_sync.configure(
+                text=f'{g("cloud")} sincronização desativada',
+                text_color=color("text_muted"),
+            )
+            return
+
+        pending = int(status.get("pending_conflicts") or 0)
+        last_at = str(status.get("last_at") or "")
+        stamp = last_at[11:16] if len(last_at) >= 16 else "nunca"
+        if pending:
+            self.status_sync.configure(
+                text=f'{g("conflict")} {pending} conflito(s) para revisar',
+                text_color=color("warning"),
+            )
+        else:
+            self.status_sync.configure(
+                text=f'{g("cloud")} sincronizado {stamp}',
+                text_color=color("text_muted"),
+            )
 
     def update_status(self, clipboard_seconds: Optional[int] = None,
                       lock_seconds: Optional[int] = None) -> None:

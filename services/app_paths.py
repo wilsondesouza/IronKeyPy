@@ -1,3 +1,12 @@
+"""
+Resolução de caminhos da aplicação (dados do usuário e recursos empacotados).
+
+Corrige dois problemas da versão anterior:
+  * caminhos de assets relativos ao CWD (quebravam fora da pasta do projeto e
+    dentro de executáveis PyInstaller);
+  * diretório de dados sem permissões restritivas em sistemas POSIX.
+"""
+
 from __future__ import annotations
 
 import os
